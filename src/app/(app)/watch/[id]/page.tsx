@@ -18,6 +18,7 @@ import {
 } from "@/types/anime";
 import { VideoPlayer } from "@/components/watch/VideoPlayer";
 import { EpisodePanel } from "@/components/watch/EpisodePanel";
+import { VerificationBadge } from "@/components/watch/VerificationBadge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,8 +30,6 @@ import {
   Calendar,
   Tv,
   Info,
-  Server,
-  CheckCircle2,
 } from "lucide-react";
 
 interface PageProps {
@@ -175,20 +174,8 @@ export default function WatchPage({ params }: PageProps) {
             onProgress={handleProgress}
           />
 
-          {/* Backend mode badge */}
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Badge
-              variant="outline"
-              className="border-xan-crimson/30 text-xan-crimson bg-xan-crimson/5"
-            >
-              <Server className="h-3 w-3 mr-1" />
-              Backend Streaming
-            </Badge>
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-              HLS playback enabled
-            </span>
-          </div>
+          {/* Backend mode badge + verification status */}
+          <VerificationBadge />
 
           {/* Title + meta */}
           <div className="space-y-3">

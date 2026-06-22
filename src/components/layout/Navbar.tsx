@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Menu, X, Play, Home as HomeIcon, Flame, History } from "lucide-react";
+import { Search, Menu, X, Play, Home as HomeIcon, Flame, History, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -107,6 +107,20 @@ export function Navbar() {
             />
           </form>
 
+          {/* Settings link (desktop) */}
+          <Link
+            href="/settings"
+            className={cn(
+              "hidden md:flex w-9 h-9 items-center justify-center rounded-lg transition-colors",
+              pathname === "/settings"
+                ? "text-foreground bg-xan-card-hover"
+                : "text-muted-foreground hover:text-foreground hover:bg-xan-card",
+            )}
+            aria-label="Settings"
+          >
+            <Settings className="h-5 w-5" />
+          </Link>
+
           {/* Mobile search toggle */}
           <Button
             variant="ghost"
@@ -195,6 +209,18 @@ export function Navbar() {
                   </Link>
                 );
               })}
+              <Link
+                href="/settings"
+                className={cn(
+                  "px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors border-t border-xan-border mt-2 pt-3",
+                  pathname === "/settings"
+                    ? "text-foreground bg-xan-card-hover"
+                    : "text-muted-foreground hover:text-foreground hover:bg-xan-card",
+                )}
+              >
+                <Settings className="h-4 w-4" />
+                Settings
+              </Link>
             </div>
           </motion.div>
         )}

@@ -7,13 +7,16 @@
 //   - Full anime info (score, description, episode count, available episodes)
 //   - Direct lookup by AniList ID (using the `aniListId` field on every show)
 //
-// NOTE: Stream URLs themselves are Cloudflare-protected (need browser JS to solve).
-// We expose `fetchAllAnimeStreamSources()` as a best-effort attempt that will
-// typically return null — the stream proxy falls back to mock HLS in that case.
+// Stream URLs are Cloudflare-protected. The user must manually solve the CF
+// challenge in their browser and paste the cf_clearance cookie into /settings.
+// We store it server-side (lib/cf-cookie-store.ts) and attach it to /episodes
+// requests. See /settings page for the verification UI.
 
 import { z } from "zod";
+import { getStoredCookie } from "./cf-cookie-store";
 
 const ALLANIME_GRAPHQL = "https://api.allanime.day/api/graphql";
+const ALLANIME_EPISODES = "https://api.allanime.day/episodes";
 const REQUEST_TIMEOUT_MS = 12000;
 
 // ─── Schemas ───
@@ -184,34 +187,40 @@ export async function findShowByAniListId(
 /**
  * Best-effort attempt to fetch stream sources for an episode.
  *
- * NOTE: AllAnime's stream URL endpoint (`/episodes?id=<showId>&episode=<ep>`)
- * is Cloudflare-protected and requires real browser JS to solve the challenge.
- * Server-side fetch will almost always fail with HTTP 403. Returns null in
- * that case so the caller can fall back to mock HLS.
+ * Uses the stored `cf_clearance` cookie (from /settings page) to bypass
+ * Cloudflare. If the cookie is missing or expired, returns null.
  */
 export async function fetchAllAnimeStreamSources(
   allAnimeId: string,
   episode: string,
   type: "sub" | "dub" = "sub",
 ): Promise<{ url: string; quality: string | null }[] | null> {
+  const stored = await getStoredCookie();
+  if (!stored) {
+    console.warn("[AllAnime] No cf_clearance cookie stored — visit /settings to verify");
+    return null;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const url = `https://api.allanime.day/episodes?id=${encodeURIComponent(allAnimeId)}&episode=${encodeURIComponent(episode)}&type=${type}`;
+    const url = `${ALLANIME_EPISODES}?id=${encodeURIComponent(allAnimeId)}&episode=${encodeURIComponent(episode)}&type=${type}`;
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": stored.userAgent,
         Accept: "application/json",
         Referer: "https://allmanga.to/",
         Origin: "https://allmanga.to",
+        Cookie: `cf_clearance=${stored.value}`,
       },
     });
 
     if (!res.ok) {
-      console.warn(`[AllAnime] stream endpoint HTTP ${res.status} (likely Cloudflare challenge)`);
+      console.warn(
+        `[AllAnime] stream endpoint HTTP ${res.status} — cookie may be expired or invalid`,
+      );
       return null;
     }
 
@@ -233,6 +242,65 @@ export async function fetchAllAnimeStreamSources(
       console.error("[AllAnime] stream fetch failed:", err);
     }
     return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Test whether the stored cf_clearance cookie works.
+ * Returns the HTTP status and a snippet of the response body.
+ */
+export async function testStoredCookie(): Promise<{
+  status: number;
+  ok: boolean;
+  bodySnippet: string;
+  hasCookie: boolean;
+}> {
+  const stored = await getStoredCookie();
+  if (!stored) {
+    return { status: 0, ok: false, bodySnippet: "", hasCookie: false };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    // Use a known anime ID (Cowboy Bebop) for the test
+    const url = `${ALLANIME_EPISODES}?id=PGcK4wGnqDoeihT6n&episode=1&type=sub`;
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": stored.userAgent,
+        Accept: "application/json",
+        Referer: "https://allmanga.to/",
+        Origin: "https://allmanga.to",
+        Cookie: `cf_clearance=${stored.value}`,
+      },
+    });
+
+    const body = await res.text();
+    return {
+      status: res.status,
+      ok: res.ok && !body.includes("Just a moment"),
+      bodySnippet: body.substring(0, 500),
+      hasCookie: true,
+    };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return {
+        status: 0,
+        ok: false,
+        bodySnippet: "Request timed out",
+        hasCookie: true,
+      };
+    }
+    return {
+      status: 0,
+      ok: false,
+      bodySnippet: err instanceof Error ? err.message : "Unknown error",
+      hasCookie: true,
+    };
   } finally {
     clearTimeout(timeout);
   }
