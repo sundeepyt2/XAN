@@ -2,14 +2,13 @@
 
 // app/(app)/watch/[id]/page.tsx
 // ✅ "use client" — player, localStorage, useSearchParams
+// ✅ Backend mode is MANDATORY — VideoPlayer fetches stream from backend
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import {
-  fetchAnimeDetail,
-} from "@/lib/anilist";
+import { fetchAnimeDetail } from "@/lib/anilist";
 import {
   getTitle,
   sanitizeDescription,
@@ -23,7 +22,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
-import { ArrowLeft, Star, Clock, Calendar, Tv, Info } from "lucide-react";
+import {
+  ArrowLeft,
+  Star,
+  Clock,
+  Calendar,
+  Tv,
+  Info,
+  Server,
+  CheckCircle2,
+} from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -74,20 +82,39 @@ export default function WatchPage({ params }: PageProps) {
     };
   }, [animeId]);
 
-  // Record watch progress in localStorage (debounced via interval)
+  // Save progress to history when current episode changes / when player reports progress
+  const handleProgress = useCallback(
+    (timestamp: number, duration: number) => {
+      if (!anime) return;
+      addEntry({
+        animeId: anime.id,
+        episodeId: String(currentEpisode),
+        episodeNumber: currentEpisode,
+        timestamp,
+        duration: duration > 0 ? duration : 24 * 60,
+        title: getTitle(anime.title),
+        coverImage: anime.coverImage?.large ?? "/placeholder-card.png",
+        updatedAt: Date.now(),
+      });
+    },
+    [anime, currentEpisode, addEntry],
+  );
+
+  // Initial history entry (so it shows up even before player reports progress)
   useEffect(() => {
     if (!anime) return;
-    // Record an entry — assume 24min duration per episode if unknown
     addEntry({
       animeId: anime.id,
       episodeId: String(currentEpisode),
       episodeNumber: currentEpisode,
-      timestamp: 0, // trailer-only mode has no progress
+      timestamp: 0,
       duration: 24 * 60,
       title: getTitle(anime.title),
       coverImage: anime.coverImage?.large ?? "/placeholder-card.png",
       updatedAt: Date.now(),
     });
+    // Deps intentionally limited — addEntry identity changes per render, but
+    // we only want to record history on anime/episode change.
   }, [anime, currentEpisode, addEntry]);
 
   if (loading) {
@@ -114,13 +141,14 @@ export default function WatchPage({ params }: PageProps) {
 
   const title = getTitle(anime.title);
   const description = sanitizeDescription(anime.description);
-  const trailerId = anime.trailer?.id ?? null;
-  const trailerSite = anime.trailer?.site ?? null;
 
   // Episode navigation
   const total = anime.episodes ?? 12;
   const prevEp = currentEpisode > 1 ? currentEpisode - 1 : null;
   const nextEp = currentEpisode < total ? currentEpisode + 1 : null;
+
+  // Use banner image as poster for the player
+  const posterUrl = anime.bannerImage || anime.coverImage?.large || undefined;
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
@@ -138,13 +166,29 @@ export default function WatchPage({ params }: PageProps) {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         {/* Main column */}
         <div className="space-y-4 min-w-0">
-          {/* Player / trailer */}
+          {/* Player — backend mode */}
           <VideoPlayer
-            trailerId={trailerId}
-            trailerSite={trailerSite}
+            animeId={anime.id}
+            episode={currentEpisode}
             animeTitle={title}
-            // streamUrl is undefined in AniList-only mode → trailer fallback
+            posterUrl={posterUrl}
+            onProgress={handleProgress}
           />
+
+          {/* Backend mode badge */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="border-xan-crimson/30 text-xan-crimson bg-xan-crimson/5"
+            >
+              <Server className="h-3 w-3 mr-1" />
+              Backend Streaming
+            </Badge>
+            <span className="flex items-center gap-1">
+              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+              HLS playback enabled
+            </span>
+          </div>
 
           {/* Title + meta */}
           <div className="space-y-3">
@@ -198,7 +242,9 @@ export default function WatchPage({ params }: PageProps) {
               {anime.averageScore != null && (
                 <div className="flex items-center gap-1.5 text-foreground">
                   <Star className="h-4 w-4 text-yellow-400 fill-yellow-400" />
-                  <span className="font-semibold">{formatScore(anime.averageScore)}</span>
+                  <span className="font-semibold">
+                    {formatScore(anime.averageScore)}
+                  </span>
                 </div>
               )}
               <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -245,21 +291,6 @@ export default function WatchPage({ params }: PageProps) {
                 </p>
               </div>
             )}
-
-            {/* Notice */}
-            <div className="rounded-lg border border-xan-border bg-xan-card/30 p-3 text-xs text-muted-foreground">
-              <p className="flex items-start gap-2">
-                <Info className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                <span>
-                  You&apos;re watching the official YouTube trailer. To enable
-                  full episode streaming, configure{" "}
-                  <code className="px-1 py-0.5 bg-xan-card rounded">
-                    NEXT_PUBLIC_BACKEND_URL
-                  </code>
-                  .
-                </span>
-              </p>
-            </div>
           </div>
         </div>
 
