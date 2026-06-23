@@ -1,6 +1,9 @@
 // lib/backend.ts
 // ✅ Backend client — MANDATORY for episode streaming.
 // If NEXT_PUBLIC_BACKEND_URL is not set, the watch page will fail with a clear error.
+//
+// On Vercel/production: set NEXT_PUBLIC_BACKEND_URL to your deployed URL.
+// On local dev: defaults to http://localhost:3000/api (same-origin proxy).
 
 import { z } from "zod";
 
@@ -25,7 +28,15 @@ export const StreamResponseSchema = z.object({
 export type StreamSource = z.infer<typeof StreamSourceSchema>;
 export type StreamResponse = z.infer<typeof StreamResponseSchema>;
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+// Resolve backend URL:
+// 1. Explicit NEXT_PUBLIC_BACKEND_URL env var (always wins)
+// 2. VERCEL_URL auto-set by Vercel deployment (e.g. "xan.vercel.app")
+// 3. Local dev fallback: same-origin /api
+const VERCEL_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}/api`
+  : "";
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || VERCEL_URL || "http://localhost:3000/api";
 const REQUEST_TIMEOUT_MS = 10000;
 
 export interface BackendConfig {

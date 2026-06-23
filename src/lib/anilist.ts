@@ -103,7 +103,9 @@ async function fetchList(
   // ✅ Validate each item individually — skip bad items instead of crashing
   const validated = media
     .map((item: unknown) => AnimeSchema.safeParse(item))
-    .filter((r): r is z.SafeParseSuccess<Anime> => r.success)
+    .filter(
+      (r): r is z.ZodSafeParseSuccess<Anime> => r.success,
+    )
     .map((r) => r.data);
 
   const pageInfo = PageInfoSchema.safeParse(pageInfoRaw);

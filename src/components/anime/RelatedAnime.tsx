@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { getTitle, type RelationEdge, type Recommendation } from "@/types/anime";
+import { type RelationEdge, type Recommendation } from "@/types/anime";
 
 interface RelatedAnimeProps {
   relations: RelationEdge[];
@@ -31,7 +31,8 @@ export function RelatedAnime({ relations, recommendations }: RelatedAnimeProps) 
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {validRelations.map((edge) => {
-              const title = getTitle(edge.node.title);
+              const title =
+                edge.node.title.english ?? edge.node.title.romaji ?? "Untitled";
               const image = edge.node.coverImage.large || "/placeholder-card.png";
               return (
                 <Link
@@ -70,7 +71,8 @@ export function RelatedAnime({ relations, recommendations }: RelatedAnimeProps) 
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {validRecs.map((rec) => {
-              const title = getTitle(rec.title);
+              const title =
+                rec.title.english ?? rec.title.romaji ?? "Untitled";
               const image = rec.coverImage.large || "/placeholder-card.png";
               return (
                 <Link

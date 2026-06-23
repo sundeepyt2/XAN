@@ -43,7 +43,7 @@ export type ConsumetSource = z.infer<typeof ConsumetSourceSchema>;
 
 export const ConsumetWatchSchema = z.object({
   sources: z.array(ConsumetSourceSchema).default([]),
-  headers: z.record(z.string()).default({}),
+  headers: z.record(z.string(), z.string()).default({}),
   subtitles: z
     .array(z.object({ url: z.string(), lang: z.string().nullable().default(null) }))
     .default([]),

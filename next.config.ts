@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
-  // ✅ Bug #15: Use remotePatterns, NOT deprecated domains
+  // ✅ No `output: "standalone"` — Vercel handles deployment automatically.
+  // (The old `standalone` mode required manual `cp` commands in the build script
+  // which broke Vercel deployments.)
   images: {
     remotePatterns: [
       {
@@ -17,6 +18,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Don't ignore build errors — we want type safety.
+  // But we DO want to skip type-checking files outside src/ (skills/, scripts/, etc.)
+  // That's handled by tsconfig.json's `exclude` array.
   typescript: {
     ignoreBuildErrors: false,
   },
