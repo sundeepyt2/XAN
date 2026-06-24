@@ -69,7 +69,7 @@ export const POPULAR_QUERY = `
 `;
 
 export const SEARCH_QUERY = `
-  query ($search: String, $page: Int, $perPage: Int, $genres: [String], $sort: [MediaSort]) {
+  query ($search: String, $page: Int, $perPage: Int, $genres: [String], $tags: [String], $sort: [MediaSort]) {
     Page(page: $page, perPage: $perPage) {
       pageInfo {
         currentPage
@@ -78,8 +78,38 @@ export const SEARCH_QUERY = `
         perPage
         total
       }
-      media(type: ANIME, search: $search, genre_in: $genres, sort: $sort) {
+      media(type: ANIME, search: $search, genre_in: $genres, tag_in: $tags, sort: $sort) {
         ${MEDIA_FIELDS}
+      }
+    }
+  }
+`;
+
+export const AIRING_SCHEDULE_QUERY = `
+  query ($page: Int, $perPage: Int, $airingAtGreater: Int, $airingAtLesser: Int) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo {
+        currentPage
+        hasNextPage
+        lastPage
+        perPage
+        total
+      }
+      airingSchedules(airingAt_greater: $airingAtGreater, airingAt_lesser: $airingAtLesser, sort: TIME) {
+        id
+        airingAt
+        episode
+        media {
+          id
+          title { romaji english native }
+          coverImage { large color }
+          episodes
+          format
+          status
+          averageScore
+          genres
+          bannerImage
+        }
       }
     }
   }

@@ -17,6 +17,10 @@ interface VideoPlayerProps {
   animeTitle: string;
   posterUrl?: string;
   onProgress?: (currentTime: number, duration: number) => void;
+  skipIntroOffset?: number;
+  autoResumeTime?: number;
+  nextEpisode?: number | null;
+  onPlayNext?: () => void;
 }
 
 interface StreamData {
@@ -39,6 +43,10 @@ export function VideoPlayer({
   animeTitle,
   posterUrl,
   onProgress,
+  skipIntroOffset,
+  autoResumeTime,
+  nextEpisode,
+  onPlayNext,
 }: VideoPlayerProps) {
   const [stream, setStream] = useState<StreamData | null>(null);
   const [headers, setHeaders] = useState<Record<string, string> | undefined>();
@@ -169,6 +177,10 @@ export function VideoPlayer({
         onProgress={stableOnProgress}
         headers={headers}
         provider={provider}
+        skipIntroOffset={skipIntroOffset}
+        autoResumeTime={autoResumeTime}
+        nextEpisode={nextEpisode}
+        onPlayNext={onPlayNext}
       />
     </div>
   );

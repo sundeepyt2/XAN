@@ -7,6 +7,7 @@ import { TrendingCarousel } from "@/components/home/TrendingCarousel";
 import { PopularGrid } from "@/components/home/PopularGrid";
 import { ContinueWatching } from "@/components/home/ContinueWatching";
 import { CategoryTabs } from "@/components/home/CategoryTabs";
+import { RecommendationsRow } from "@/components/home/RecommendationsRow";
 import { AnimeCardSkeleton } from "@/components/cards/AnimeCardSkeleton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
@@ -17,6 +18,9 @@ export default function HomePage() {
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-8 space-y-12">
       {/* Continue Watching (client — localStorage) */}
       <ContinueWatching />
+
+      {/* Recommended For You (client — analyzes watch history) */}
+      <RecommendationsRow />
 
       {/* Trending */}
       <ErrorBoundary message="Couldn't load trending">

@@ -14,7 +14,9 @@ import {
   POPULAR_QUERY,
   SEARCH_QUERY,
   ANIME_DETAIL_QUERY,
+  AIRING_SCHEDULE_QUERY,
 } from "./anilist-queries";
+import { isTag } from "./constants";
 import { z } from "zod";
 
 const ANILIST_URL = "https://graphql.anilist.co";
@@ -145,14 +147,66 @@ export async function fetchSearch(
   perPage = 20,
   genres?: string[],
   sort?: string,
+  tags?: string[],
 ): Promise<FetchResult | null> {
   return fetchList(SEARCH_QUERY, {
     search: search || null,
     page,
     perPage,
     genres: genres && genres.length > 0 ? genres : undefined,
+    tags: tags && tags.length > 0 ? tags : undefined,
     sort: sort ? [sort] : undefined,
   });
+}
+
+// ─── Airing Schedule ───
+export interface AiringScheduleEntry {
+  id: number;
+  airingAt: number;
+  episode: number;
+  media: Anime;
+}
+
+export async function fetchAiringSchedule(
+  startTime: number,
+  endTime: number,
+  page = 1,
+  perPage = 50,
+): Promise<{ data: AiringScheduleEntry[]; hasNextPage: boolean } | null> {
+  const json = await fetchFromAniList(AIRING_SCHEDULE_QUERY, {
+    page,
+    perPage,
+    airingAtGreater: startTime,
+    airingAtLesser: endTime,
+  });
+  if (!json) return null;
+
+  const schedules = (json as any)?.data?.Page?.airingSchedules;
+  const pageInfo = (json as any)?.data?.Page?.pageInfo;
+  if (!Array.isArray(schedules)) {
+    console.error("[AniList] Unexpected airing schedule response shape");
+    return null;
+  }
+
+  // Validate each schedule entry, skip invalid ones
+  const validated: AiringScheduleEntry[] = [];
+  for (const entry of schedules) {
+    if (!entry?.media) continue;
+    const parsed = AnimeSchema.safeParse(entry.media);
+    if (parsed.success) {
+      validated.push({
+        id: entry.id,
+        airingAt: entry.airingAt,
+        episode: entry.episode,
+        media: parsed.data,
+      });
+    }
+  }
+
+  return {
+    data: validated,
+    hasNextPage: pageInfo?.hasNextPage ?? false,
+  };
 }
 
 export async function fetchAnimeDetail(
@@ -176,16 +230,19 @@ export async function fetchAnimeDetail(
   return { data: parsed.data };
 }
 
-// ─── Helper: Fetch anime by genre ───
+// ─── Helper: Fetch anime by genre or tag ───
+// If the category is actually a tag (Shounen, Seinen, etc.), query via tag_in.
 export async function fetchByGenre(
   genre: string,
   page = 1,
   perPage = 20,
 ): Promise<FetchResult | null> {
+  const categoryIsTag = isTag(genre);
   return fetchList(SEARCH_QUERY, {
     search: null,
     page,
     perPage,
-    genres: [genre],
+    genres: categoryIsTag ? undefined : [genre],
+    tags: categoryIsTag ? [genre] : undefined,
   });
 }

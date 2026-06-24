@@ -18,11 +18,29 @@ export const GENRES = [
   "Psychological",
   "Mecha",
   "Music",
-  "School",
-  "Shounen",
-  "Seinen",
-  "Isekai",
 ] as const;
+
+// Tags are AniList "tags" (demographics/themes), not genres.
+// They must be queried via `tag_in` (not `genre_in`) or AniList returns 0 results.
+export const TAGS = [
+  { label: "Shounen", value: "Shounen" },
+  { label: "Seinen", value: "Seinen" },
+  { label: "Shoujo", value: "Shoujo" },
+  { label: "Josei", value: "Josei" },
+  { label: "Isekai", value: "Isekai" },
+  { label: "School Life", value: "School Life" },
+] as const;
+
+// Combined list for UI dropdowns — marks which ones are tags vs genres
+export const ALL_CATEGORIES: { label: string; value: string; isTag: boolean }[] = [
+  ...GENRES.map((g) => ({ label: g, value: g, isTag: false })),
+  ...TAGS.map((t) => ({ label: t.label, value: t.value, isTag: true })),
+];
+
+// Check if a category name is a tag (not a genre)
+export function isTag(value: string): boolean {
+  return TAGS.some((t) => t.value === value || t.label === value);
+}
 
 export const SORT_OPTIONS = [
   { label: "Popularity", value: "POPULARITY_DESC" },

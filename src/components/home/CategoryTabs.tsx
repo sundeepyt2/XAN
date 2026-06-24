@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import { AnimeCard } from "@/components/cards/AnimeCard";
 import { AnimeCardSkeleton } from "@/components/cards/AnimeCardSkeleton";
 import { ErrorCard } from "@/components/ErrorCard";
-import { GENRES } from "@/lib/constants";
+import { ALL_CATEGORIES } from "@/lib/constants";
 import type { Anime } from "@/types/anime";
 
 interface CategoryTabsProps {
@@ -59,17 +59,17 @@ export function CategoryTabs({ initialGenre = "Action" }: CategoryTabsProps) {
 
       {/* Tab pills */}
       <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
-        {GENRES.map((genre) => (
+        {ALL_CATEGORIES.map((cat) => (
           <button
-            key={genre}
-            onClick={() => setActive(genre)}
+            key={cat.value}
+            onClick={() => setActive(cat.value)}
             className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all border ${
-              active === genre
+              active === cat.value
                 ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white border-transparent shadow-[0_0_20px_rgba(233,69,96,0.3)]"
                 : "bg-xan-card text-muted-foreground hover:text-foreground hover:bg-xan-card-hover border-xan-border"
             }`}
           >
-            {genre}
+            {cat.label}
           </button>
         ))}
       </div>

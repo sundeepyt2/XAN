@@ -14,6 +14,7 @@ export interface WatchHistoryEntry {
   title: string;
   coverImage: string;
   updatedAt: number; // Date.now()
+  genres?: string[]; // stored for recommendation engine
 }
 
 const STORAGE_KEY = "xan-watch-history";

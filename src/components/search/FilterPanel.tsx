@@ -4,7 +4,6 @@
 
 import { Filter, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -12,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { GENRES, SORT_OPTIONS, FORMATS } from "@/lib/constants";
+import { GENRES, TAGS, SORT_OPTIONS, FORMATS } from "@/lib/constants";
 
 interface FilterPanelProps {
   selectedGenres: string[];
@@ -23,6 +22,9 @@ interface FilterPanelProps {
   format: string;
   onFormatChange: (v: string) => void;
   total?: number;
+  selectedTags?: string[];
+  onTagToggle?: (tag: string) => void;
+  onClearTags?: () => void;
 }
 
 export function FilterPanel({
@@ -34,7 +36,17 @@ export function FilterPanel({
   format,
   onFormatChange,
   total,
+  selectedTags = [],
+  onTagToggle,
+  onClearTags,
 }: FilterPanelProps) {
+  const hasActiveFilters = selectedGenres.length > 0 || selectedTags.length > 0;
+
+  const handleClearAll = () => {
+    onClearGenres();
+    onClearTags?.();
+  };
+
   return (
     <div className="space-y-4 rounded-xl border border-xan-border bg-xan-card/50 p-4">
       <div className="flex items-center justify-between">
@@ -42,11 +54,11 @@ export function FilterPanel({
           <Filter className="h-4 w-4 text-xan-crimson" />
           Filters
         </h3>
-        {selectedGenres.length > 0 && (
+        {hasActiveFilters && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={onClearGenres}
+            onClick={handleClearAll}
             className="h-7 text-xs text-muted-foreground hover:text-foreground"
           >
             <X className="h-3 w-3 mr-1" />
@@ -114,6 +126,33 @@ export function FilterPanel({
           })}
         </div>
       </div>
+
+      {/* Tags / Demographics */}
+      {onTagToggle && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Demographics {selectedTags.length > 0 && `(${selectedTags.length})`}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {TAGS.map((tag) => {
+              const selected = selectedTags.includes(tag.value);
+              return (
+                <button
+                  key={tag.value}
+                  onClick={() => onTagToggle(tag.value)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
+                    selected
+                      ? "bg-xan-violet/20 text-xan-violet border-xan-violet/40"
+                      : "bg-xan-card text-muted-foreground hover:text-foreground border-xan-border"
+                  }`}
+                >
+                  {tag.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {typeof total === "number" && (
         <p className="text-xs text-muted-foreground pt-2 border-t border-xan-border">

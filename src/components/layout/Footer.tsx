@@ -50,6 +50,14 @@ export function Footer() {
                 </li>
                 <li>
                   <Link
+                    href="/schedule"
+                    className="text-foreground/80 hover:text-foreground transition-colors"
+                  >
+                    Schedule
+                  </Link>
+                </li>
+                <li>
+                  <Link
                     href="/search"
                     className="text-foreground/80 hover:text-foreground transition-colors"
                   >

@@ -21,10 +21,12 @@ export default function SearchPage() {
 
   const initialQ = searchParams.get("q") || "";
   const initialGenres = searchParams.get("genres")?.split(",").filter(Boolean) ?? [];
+  const initialTags = searchParams.get("tags")?.split(",").filter(Boolean) ?? [];
   const initialSort = searchParams.get("sort") || "POPULARITY_DESC";
 
   const [query, setQuery] = useState(initialQ);
   const [selectedGenres, setSelectedGenres] = useState<string[]>(initialGenres);
+  const [selectedTags, setSelectedTags] = useState<string[]>(initialTags);
   const [sort, setSort] = useState(initialSort);
   const [format, setFormat] = useState("");
   const [data, setData] = useState<Anime[] | null>(null);
@@ -35,16 +37,17 @@ export default function SearchPage() {
 
   const debouncedQuery = useDebounce(query, 400);
 
-  // Update URL when query/genres/sort change (shareable)
+  // Update URL when query/genres/tags/sort change (shareable)
   useEffect(() => {
     const params = new URLSearchParams();
     if (debouncedQuery) params.set("q", debouncedQuery);
     if (selectedGenres.length > 0) params.set("genres", selectedGenres.join(","));
+    if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
     if (sort && sort !== "POPULARITY_DESC") params.set("sort", sort);
     const qs = params.toString();
     router.replace(qs ? `/search?${qs}` : "/search", { scroll: false });
     setPage(1);
-  }, [debouncedQuery, selectedGenres, sort, router]);
+  }, [debouncedQuery, selectedGenres, selectedTags, sort, router]);
 
   // Fetch results
   useEffect(() => {
@@ -59,6 +62,7 @@ export default function SearchPage() {
     });
     if (debouncedQuery) params.set("q", debouncedQuery);
     if (selectedGenres.length > 0) params.set("genres", selectedGenres.join(","));
+    if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
 
     fetch(`/api/search?${params.toString()}`)
       .then(async (res) => {
@@ -79,13 +83,21 @@ export default function SearchPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, selectedGenres, sort, page]);
+  }, [debouncedQuery, selectedGenres, selectedTags, sort, page]);
 
   const handleGenreToggle = useCallback((genre: string) => {
     setSelectedGenres((prev) =>
       prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre],
     );
   }, []);
+
+  const handleTagToggle = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  }, []);
+
+  const handleClearTags = useCallback(() => setSelectedTags([]), []);
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-8 space-y-6">
@@ -114,6 +126,9 @@ export default function SearchPage() {
           format={format}
           onFormatChange={setFormat}
           total={data?.length}
+          selectedTags={selectedTags}
+          onTagToggle={handleTagToggle}
+          onClearTags={handleClearTags}
         />
 
         {/* Results */}

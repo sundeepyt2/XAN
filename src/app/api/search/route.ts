@@ -11,9 +11,10 @@ export async function GET(request: Request) {
   const perPage = Math.min(Number(searchParams.get("perPage") || "20"), 50);
   const sort = searchParams.get("sort") || undefined;
   const genres = searchParams.get("genres")?.split(",").filter(Boolean);
+  const tags = searchParams.get("tags")?.split(",").filter(Boolean);
 
   try {
-    const result = await fetchSearch(q, page, perPage, genres, sort);
+    const result = await fetchSearch(q, page, perPage, genres, sort, tags);
     if (!result) {
       return NextResponse.json(
         { error: "Failed to fetch from AniList" },

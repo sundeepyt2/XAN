@@ -19,6 +19,7 @@ import {
 import { VideoPlayer } from "@/components/watch/VideoPlayer";
 import { EpisodePanel } from "@/components/watch/EpisodePanel";
 import { VerificationBadge } from "@/components/watch/VerificationBadge";
+import { SimilarAnime } from "@/components/watch/SimilarAnime";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -46,7 +47,7 @@ export default function WatchPage({ params }: PageProps) {
   const [anime, setAnime] = useState<AnimeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const { addEntry } = useWatchHistory();
+  const { addEntry, history: watchHistory } = useWatchHistory();
 
   // Fetch anime detail client-side (since page is "use client")
   useEffect(() => {
@@ -94,6 +95,7 @@ export default function WatchPage({ params }: PageProps) {
         title: getTitle(anime.title),
         coverImage: anime.coverImage?.large ?? "/placeholder-card.png",
         updatedAt: Date.now(),
+        genres: anime.genres,
       });
     },
     [anime, currentEpisode, addEntry],
@@ -111,10 +113,30 @@ export default function WatchPage({ params }: PageProps) {
       title: getTitle(anime.title),
       coverImage: anime.coverImage?.large ?? "/placeholder-card.png",
       updatedAt: Date.now(),
+      genres: anime.genres,
     });
     // Deps intentionally limited — addEntry identity changes per render, but
     // we only want to record history on anime/episode change.
   }, [anime, currentEpisode, addEntry]);
+
+  // Navigate to next episode (defined before early returns to respect hook order)
+  const handlePlayNext = useCallback(() => {
+    if (anime) {
+      const total = anime.episodes ?? 12;
+      const nextEp = currentEpisode < total ? currentEpisode + 1 : null;
+      if (nextEp) {
+        window.location.href = `/watch/${anime.id}?ep=${nextEp}`;
+      }
+    }
+  }, [anime, currentEpisode]);
+
+  // Find saved history entry for resume position
+  const historyEntry = anime
+    ? watchHistory.find(
+        (h) => h.animeId === anime.id && h.episodeNumber === currentEpisode,
+      )
+    : undefined;
+  const autoResumeTime = historyEntry?.timestamp ?? undefined;
 
   if (loading) {
     return (
@@ -172,6 +194,9 @@ export default function WatchPage({ params }: PageProps) {
             animeTitle={title}
             posterUrl={posterUrl}
             onProgress={handleProgress}
+            autoResumeTime={autoResumeTime}
+            nextEpisode={nextEp}
+            onPlayNext={handlePlayNext}
           />
 
           {/* Backend mode badge + verification status */}
@@ -277,6 +302,14 @@ export default function WatchPage({ params }: PageProps) {
                   {description}
                 </p>
               </div>
+            )}
+
+            {/* Similar anime recommendations */}
+            {anime.recommendations?.nodes && anime.recommendations.nodes.length > 0 && (
+              <SimilarAnime
+                recommendations={anime.recommendations.nodes}
+                currentTitle={title}
+              />
             )}
           </div>
         </div>
