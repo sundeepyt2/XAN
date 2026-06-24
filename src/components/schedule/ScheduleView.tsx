@@ -30,13 +30,15 @@ const DAYS = [
 ];
 
 export function ScheduleView({ schedule }: ScheduleViewProps) {
-  const today = new Date().getDay();
+  // Bug 7 fix: use getUTCDay() consistently — the page groups by UTC,
+  // so the view must also use UTC to avoid day-of-week mismatch for non-UTC users.
+  const today = new Date().getUTCDay();
   const [selectedDay, setSelectedDay] = useState(today);
 
-  // Group by day of week
+  // Group by day of week (UTC)
   const byDay: Record<number, ScheduleEntry[]> = {};
   for (const entry of schedule) {
-    const day = new Date(entry.airingAt * 1000).getDay();
+    const day = new Date(entry.airingAt * 1000).getUTCDay();
     if (!byDay[day]) byDay[day] = [];
     byDay[day].push(entry);
   }

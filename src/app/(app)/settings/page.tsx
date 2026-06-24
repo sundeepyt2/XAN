@@ -66,6 +66,8 @@ interface ClientTestResult {
 export default function SettingsPage() {
   const [status, setStatus] = useState<CookieStatus | null>(null);
   const [cookieValue, setCookieValue] = useState("");
+  // Bug 16 fix: initialize to empty string (not navigator.userAgent) to avoid
+  // hydration mismatch — UA is set inside useEffect (client-only)
   const [userAgent, setUserAgent] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);

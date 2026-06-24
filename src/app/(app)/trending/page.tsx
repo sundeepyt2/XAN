@@ -3,9 +3,9 @@
 
 import { fetchTrending } from "@/lib/anilist";
 import { AnimeCard } from "@/components/cards/AnimeCard";
-import { AnimeCardSkeleton } from "@/components/cards/AnimeCardSkeleton";
 import { ErrorCard } from "@/components/ErrorCard";
 import { Flame } from "lucide-react";
+import Link from "next/link";
 
 export const revalidate = 300;
 
@@ -52,28 +52,34 @@ export default async function TrendingPage({ searchParams }: PageProps) {
 
           {pageInfo && (page > 1 || pageInfo.hasNextPage) && (
             <div className="flex items-center justify-center gap-3 pt-4">
-              <a
-                href={page > 1 ? `/trending?page=${page - 1}` : "#"}
-                aria-disabled={page <= 1}
-                className={`inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card hover:bg-xan-card-hover ${
-                  page <= 1 ? "opacity-40 pointer-events-none" : ""
-                }`}
-              >
-                Previous
-              </a>
+              {page > 1 ? (
+                <Link
+                  href={`/trending?page=${page - 1}`}
+                  className="inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card hover:bg-xan-card-hover"
+                >
+                  Previous
+                </Link>
+              ) : (
+                <span className="inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card opacity-40 pointer-events-none">
+                  Previous
+                </span>
+              )}
               <span className="text-sm text-muted-foreground px-3">
                 Page {page}
                 {pageInfo.lastPage ? ` of ${pageInfo.lastPage}` : ""}
               </span>
-              <a
-                href={pageInfo.hasNextPage ? `/trending?page=${page + 1}` : "#"}
-                aria-disabled={!pageInfo.hasNextPage}
-                className={`inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card hover:bg-xan-card-hover ${
-                  !pageInfo.hasNextPage ? "opacity-40 pointer-events-none" : ""
-                }`}
-              >
-                Next
-              </a>
+              {pageInfo.hasNextPage ? (
+                <Link
+                  href={`/trending?page=${page + 1}`}
+                  className="inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card hover:bg-xan-card-hover"
+                >
+                  Next
+                </Link>
+              ) : (
+                <span className="inline-flex items-center justify-center h-9 px-4 rounded-md text-sm font-medium border border-xan-border bg-xan-card opacity-40 pointer-events-none">
+                  Next
+                </span>
+              )}
             </div>
           )}
         </>

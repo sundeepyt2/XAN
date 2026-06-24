@@ -63,6 +63,14 @@ export function StreamPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  // Bug 11+12 fix: use refs for callbacks + autoResumeTime to avoid
+  // tearing down the video element on every progress tick / re-render
+  const onProgressRef = useRef(onProgress);
+  const autoResumeTimeRef = useRef(autoResumeTime);
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+    autoResumeTimeRef.current = autoResumeTime;
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -88,11 +96,12 @@ export function StreamPlayer({
     const video = videoRef.current;
     if (!video) return;
     setDuration(video.duration || 0);
-    // Resume from saved position
-    if (autoResumeTime && autoResumeTime > 5 && autoResumeTime < video.duration - 10) {
-      video.currentTime = autoResumeTime;
+    // Resume from saved position — Bug 12 fix: use ref, not prop
+    const resumeTime = autoResumeTimeRef.current;
+    if (resumeTime && resumeTime > 5 && resumeTime < video.duration - 10) {
+      video.currentTime = resumeTime;
     }
-  }, [autoResumeTime]);
+  }, []);
 
   const onPlaying = useCallback(() => {
     setPlaying(true);
@@ -106,7 +115,8 @@ export function StreamPlayer({
     if (!video) return;
     setProgress(video.currentTime);
     setDuration(video.duration || 0);
-    onProgress?.(video.currentTime, video.duration || 0);
+    // Bug 11 fix: use ref, not prop — avoids re-creating callback on every tick
+    onProgressRef.current?.(video.currentTime, video.duration || 0);
 
     // Skip intro button visibility (5s to skipIntroOffset)
     const t = video.currentTime;
@@ -123,7 +133,7 @@ export function StreamPlayer({
       autoPlayFiredRef.current = true;
       setShowAutoPlay(true);
     }
-  }, [onProgress, skipIntroOffset, nextEpisode, onPlayNext]);
+  }, [skipIntroOffset, nextEpisode, onPlayNext]);
 
   const onEnded = useCallback(() => {
     setPlaying(false);

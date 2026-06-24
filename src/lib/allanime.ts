@@ -628,11 +628,13 @@ export async function getEpisodeStreams(
     return [];
   }
 
+  // Bug 20 fix: parallelize extraction instead of sequential — much faster
+  // when there are 15+ sources. Use Promise.allSettled to handle failures gracefully.
+  const settled = await Promise.allSettled(sources.map((s) => extractStreamUrl(s)));
   const results: StreamResult[] = [];
-  for (const source of sources) {
-    const extracted = await extractStreamUrl(source);
-    if (extracted) {
-      results.push(extracted);
+  for (const r of settled) {
+    if (r.status === "fulfilled" && r.value) {
+      results.push(r.value);
     }
   }
 

@@ -3,6 +3,7 @@
 
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { fetchAnimeDetail } from "@/lib/anilist";
 import {
   getTitle,
@@ -85,10 +86,14 @@ export default async function AnimeDetailPage({ params }: Props) {
             <EpisodeGrid animeId={anime.id} episodeCount={anime.episodes} />
           </div>
           <div className="space-y-8">
-            <AllAnimeCrossReference
-              anilistId={anime.id}
-              anilistTitle={getTitle(anime.title)}
-            />
+            {/* Bug 8 fix: wrap AllAnimeCrossReference in Suspense — slow AllAnime API
+                shouldn't block the entire detail page render */}
+            <Suspense fallback={<div className="rounded-lg border border-xan-border bg-xan-card/50 p-4 animate-shimmer h-48" />}>
+              <AllAnimeCrossReference
+                anilistId={anime.id}
+                anilistTitle={getTitle(anime.title)}
+              />
+            </Suspense>
             <CharacterList characters={characters} />
           </div>
         </div>

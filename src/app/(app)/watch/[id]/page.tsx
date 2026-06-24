@@ -4,7 +4,7 @@
 // ✅ "use client" — player, localStorage, useSearchParams
 // ✅ Backend mode is MANDATORY — VideoPlayer fetches stream from backend
 
-import { use, useEffect, useState, useCallback } from "react";
+import { use, useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -38,6 +38,14 @@ interface PageProps {
 }
 
 export default function WatchPage({ params }: PageProps) {
+  return (
+    <Suspense fallback={<div className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-4"><div className="w-full aspect-video rounded-lg bg-xan-card animate-shimmer" /></div>}>
+      <WatchPageInner params={params} />
+    </Suspense>
+  );
+}
+
+function WatchPageInner({ params }: PageProps) {
   const { id } = use(params);
   const animeId = parseInt(id, 10);
   const searchParams = useSearchParams();

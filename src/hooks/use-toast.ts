@@ -9,7 +9,7 @@ import type {
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+const TOAST_REMOVE_DELAY = 5000 // Bug 15 fix: was 1000000 (16+ min) — should be a few seconds
 
 type ToasterToast = ToastProps & {
   id: string
@@ -182,7 +182,7 @@ function useToast() {
         listeners.splice(index, 1)
       }
     }
-  }, [state])
+  }, []) // Bug 2 fix: was [state] — caused re-subscribe on every state change → memory leak + stale closures
 
   return {
     ...state,

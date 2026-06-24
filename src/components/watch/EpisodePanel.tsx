@@ -19,7 +19,8 @@ export function EpisodePanel({
   episodeCount,
   currentEpisode,
 }: EpisodePanelProps) {
-  const total = episodeCount ?? 12;
+  // Bug 14 fix: cap at 200 episodes to prevent rendering huge DOM
+  const total = episodeCount == null ? 12 : Math.min(episodeCount, 200);
   const episodes = Array.from({ length: total }, (_, i) => i + 1);
 
   return (

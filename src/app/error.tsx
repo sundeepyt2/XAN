@@ -2,8 +2,9 @@
 
 // app/error.tsx
 // ✅ Bug #4: REQUIRED by Next.js to be a client component
+// ✅ Bug 17 fix: use key to force remount of children on reset
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 
@@ -14,12 +15,21 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Bug 17 fix: key state forces children to remount when reset is called,
+  // clearing internal state of deeply nested components
+  const [resetKey, setResetKey] = useState(0);
+
   useEffect(() => {
     console.error("[GlobalError]", error);
   }, [error]);
 
+  const handleReset = () => {
+    setResetKey((k) => k + 1);
+    reset();
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+    <div key={resetKey} className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="text-center max-w-md">
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-xan-crimson/20 to-xan-violet/20 flex items-center justify-center mx-auto mb-4">
           <AlertCircle className="h-8 w-8 text-xan-crimson" />
@@ -36,7 +46,7 @@ export default function Error({
           </p>
         )}
         <Button
-          onClick={reset}
+          onClick={handleReset}
           className="mt-6 bg-gradient-to-r from-xan-crimson to-xan-violet hover:opacity-90 text-white border-0"
         >
           Try again

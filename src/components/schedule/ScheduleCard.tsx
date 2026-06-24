@@ -34,7 +34,7 @@ export function ScheduleCard({ anime, episode, airingAt }: ScheduleCardProps) {
       className="group flex gap-3 p-3 rounded-xl border border-xan-border bg-xan-card hover:bg-xan-card-hover hover:border-xan-crimson/30 transition-all"
     >
       {/* Cover */}
-      <div className="relative w-16 h-24 rounded-lg overflow-hidden flex-shrink-0">
+      <div className="relative w-16 h-24 rounded-lg overflow-hidden flex-shrink-0 bg-xan-card">
         <Image
           src={cover}
           alt={title}
@@ -67,10 +67,10 @@ export function ScheduleCard({ anime, episode, airingAt }: ScheduleCardProps) {
           )}
         </div>
 
-        {/* Genre badges */}
+        {/* Genre badges — Bug 19 fix: deduplicate */}
         {anime.genres.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-1">
-            {anime.genres.slice(0, 3).map((genre) => (
+            {[...new Set(anime.genres)].slice(0, 3).map((genre) => (
               <span
                 key={genre}
                 className="text-[10px] px-1.5 py-0.5 rounded-full bg-xan-card-hover text-muted-foreground"

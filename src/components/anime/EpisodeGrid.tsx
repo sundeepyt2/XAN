@@ -18,7 +18,9 @@ interface EpisodeGridProps {
 export function EpisodeGrid({ animeId, episodeCount }: EpisodeGridProps) {
   const [query, setQuery] = useState("");
 
-  const total = episodeCount ?? 12; // fallback if unknown
+  // Bug 13 fix: if episodeCount is 0, show empty state instead of defaulting to 12
+  // Bug 14 fix: cap at 200 episodes to prevent rendering huge DOM
+  const total = episodeCount == null ? 12 : Math.min(episodeCount, 200);
   const episodes = Array.from({ length: total }, (_, i) => i + 1);
 
   const filtered = query
@@ -46,6 +48,13 @@ export function EpisodeGrid({ animeId, episodeCount }: EpisodeGridProps) {
       {episodeCount == null && (
         <p className="text-xs text-muted-foreground italic">
           Episode count unknown — showing first 12 by default.
+        </p>
+      )}
+
+      {/* Bug 14 fix: show note when capping large episode lists */}
+      {episodeCount != null && episodeCount > 200 && (
+        <p className="text-xs text-muted-foreground italic">
+          Showing first 200 of {episodeCount} episodes. Use search to find specific episodes.
         </p>
       )}
 

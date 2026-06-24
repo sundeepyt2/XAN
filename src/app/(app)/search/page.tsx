@@ -2,8 +2,9 @@
 
 // app/(app)/search/page.tsx
 // ✅ "use client" — input state + URL params
+// ✅ Bug 1 fix: useSearchParams wrapped in Suspense to avoid deopt
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Search as SearchIcon, SearchX } from "lucide-react";
 import { SearchBar } from "@/components/search/SearchBar";
@@ -16,6 +17,14 @@ import { useDebounce } from "@/hooks/useDebounce";
 import type { Anime, PageInfo } from "@/types/anime";
 
 export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="max-w-7xl mx-auto px-4 md:px-6 py-8"><div className="h-8 w-48 bg-xan-card rounded animate-shimmer" /></div>}>
+      <SearchPageInner />
+    </Suspense>
+  );
+}
+
+function SearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 

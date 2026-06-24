@@ -32,11 +32,16 @@ export type StreamResponse = z.infer<typeof StreamResponseSchema>;
 // 1. Explicit NEXT_PUBLIC_BACKEND_URL env var (always wins)
 // 2. VERCEL_URL auto-set by Vercel deployment (e.g. "xan.vercel.app")
 // 3. Local dev fallback: same-origin /api
+// Bug 10 fix: Don't default to localhost — let configured reflect actual state
 const VERCEL_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}/api`
   : "";
+const LOCAL_FALLBACK =
+  process.env.NODE_ENV === "development"
+    ? "http://localhost:3000/api"
+    : "";
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || VERCEL_URL || "http://localhost:3000/api";
+  process.env.NEXT_PUBLIC_BACKEND_URL || VERCEL_URL || LOCAL_FALLBACK;
 const REQUEST_TIMEOUT_MS = 10000;
 
 export interface BackendConfig {
