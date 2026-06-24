@@ -33,6 +33,31 @@ const ALLOWED_HOSTS = [
   "vixcloud.co",
   "yt-mp4.com",
   "youtu-chan.com",
+  "allanime.day",
+  "api.allanime.day",
+  "blog.allanime.day",
+  "streamlare.com",
+  "filemoon.sx",
+  "upstream.to",
+  "gooplayer.io",
+  "gpcl.cc",
+  "fembed.com",
+  "embedsito.com",
+  "streamhd.cc",
+  "dood.so",
+  "dood.watch",
+  "dood.ws",
+  "streamsb.net",
+  "streamsb.com",
+  "sbvideo.com",
+  "vidstreaming.io",
+  "vidstream.pro",
+  "goload.pro",
+  "gogohd.pro",
+  "gogocdn.net",
+  "animixplay.to",
+  "test-streams.mux.dev",
+  "devstreaming-cdn.apple.com",
 ];
 
 function isAllowedHost(urlStr: string): boolean {
@@ -43,9 +68,13 @@ function isAllowedHost(urlStr: string): boolean {
       ALLOWED_HOSTS.some(
         (h) => hostname === h || hostname.endsWith(`.${h}`),
       ) ||
-      // Also allow any host that's clearly a CDN (e.g. cdn.example.com)
+      // Also allow any host that's clearly a CDN or stream server
       hostname.includes("cdn") ||
-      hostname.includes("stream")
+      hostname.includes("stream") ||
+      hostname.includes("media") ||
+      hostname.includes("video") ||
+      hostname.includes("fast4speed") ||
+      hostname.includes("allanime")
     );
   } catch {
     return false;
@@ -101,6 +130,12 @@ async function proxyStream(
       if (val) responseHeaders.set(h, val);
     }
 
+    // Add CORS headers so the browser allows the video element to load
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    responseHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    responseHeaders.set("Access-Control-Allow-Headers", "Range");
+    responseHeaders.set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+
     // Return the stream
     return new Response(res.body, {
       status: res.status,
@@ -153,4 +188,17 @@ export async function POST(request: Request) {
   }
 
   return proxyStream(request, body.url, body.headers);
+}
+
+// Handle CORS preflight
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
 }

@@ -60,15 +60,15 @@ export function VideoPlayer({
     setProvider("");
 
     const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
-    fetch(`/api/stream/${animeId}/${episode}?${titleParam}`)
-      .then(async (res) => {
+
+    const loadStream = async () => {
+      try {
+        const res = await fetch(`/api/stream/${animeId}/${episode}?${titleParam}`);
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error || `Backend returned ${res.status}`);
         }
-        return res.json() as Promise<StreamResponse>;
-      })
-      .then((json) => {
+        const json: StreamResponse = await res.json();
         if (cancelled) return;
         const s = json?.stream;
         if (s && s.url) {
@@ -83,12 +83,43 @@ export function VideoPlayer({
         } else {
           throw new Error("No stream URL in response");
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
-        setError(err.message || "Failed to load stream");
+        const msg = err instanceof Error ? err.message : "Failed to load stream";
+
+        // If it's a network error (dev server restarted, etc.), retry once after 2s
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+          console.log("[VideoPlayer] Network error, retrying in 2s...");
+          await new Promise((r) => setTimeout(r, 2000));
+          if (!cancelled) {
+            try {
+              const retryRes = await fetch(`/api/stream/${animeId}/${episode}?${titleParam}&allowDemo=true`);
+              if (retryRes.ok) {
+                const retryJson: StreamResponse = await retryRes.json();
+                if (!cancelled && retryJson?.stream?.url) {
+                  setStream({
+                    url: retryJson.stream.url,
+                    type: retryJson.stream.type,
+                    quality: retryJson.stream.quality ?? null,
+                  });
+                  setHeaders(retryJson.headers);
+                  setProvider(retryJson.provider ?? retryJson.sourceName ?? "demo");
+                  setLoading(false);
+                  return;
+                }
+              }
+            } catch {
+              // Fall through to error
+            }
+          }
+        }
+
+        setError(msg);
         setLoading(false);
-      });
+      }
+    };
+
+    loadStream();
 
     return () => {
       cancelled = true;
