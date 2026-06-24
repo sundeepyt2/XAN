@@ -1,0 +1,14 @@
+services:
+  xan:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./next.config.ts:/app/next.config.ts
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./package.json:/app/package.json
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped

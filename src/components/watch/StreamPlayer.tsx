@@ -1,13 +1,23 @@
 "use client";
 
 // components/watch/StreamPlayer.tsx
-// ✅ Real HLS player using native <video> + hls.js
-// ✅ Replaces the broken Vidstack 0.6.x stub
+// ✅ Real HLS/MP4 player using native <video> + hls.js
+// ✅ Supports custom headers (via /api/proxy_stream) for sources like Yt-mp4
+// ✅ Shows provider badge (Yt-mp4, Megacloud, etc.)
 
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { AlertCircle, Loader2, Settings, Maximize, Play, Pause, Volume2, VolumeX } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  AlertCircle,
+  Loader2,
+  Maximize,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  CheckCircle2,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface StreamPlayerProps {
   streamUrl: string;
@@ -15,6 +25,8 @@ interface StreamPlayerProps {
   title: string;
   posterUrl?: string;
   onProgress?: (currentTime: number, duration: number) => void;
+  headers?: Record<string, string>;
+  provider?: string;
 }
 
 export function StreamPlayer({
@@ -23,6 +35,8 @@ export function StreamPlayer({
   title,
   posterUrl,
   onProgress,
+  headers,
+  provider,
 }: StreamPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -32,6 +46,12 @@ export function StreamPlayer({
   const [muted, setMuted] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  // Determine the actual video URL — if headers are needed, route through proxy
+  const needsProxy = headers && Object.keys(headers).length > 0;
+  const videoUrl = needsProxy
+    ? buildProxyUrl(streamUrl, headers)
+    : streamUrl;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -85,10 +105,15 @@ export function StreamPlayer({
 
     if (streamType === "hls") {
       if (Hls.isSupported()) {
-        // Use hls.js for browsers that don't natively support HLS (Chrome, Firefox, Edge)
-        const hls = new Hls({ enableWorker: true });
+        const hls = new Hls({
+          enableWorker: true,
+          // If we're using the proxy, the proxy handles headers — no need for xhrSetup
+          xhrSetup: needsProxy
+            ? undefined
+            : undefined,
+        });
         hlsRef.current = hls;
-        hls.loadSource(streamUrl);
+        hls.loadSource(videoUrl);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (_evt, data) => {
           if (data.fatal) {
@@ -98,14 +123,14 @@ export function StreamPlayer({
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         // Safari supports HLS natively
-        video.src = streamUrl;
+        video.src = videoUrl;
       } else {
         setError("HLS is not supported in this browser.");
         setLoading(false);
       }
     } else {
-      // Direct MP4 / DASH
-      video.src = streamUrl;
+      // Direct MP4
+      video.src = videoUrl;
     }
 
     return () => {
@@ -120,7 +145,7 @@ export function StreamPlayer({
         hlsRef.current = null;
       }
     };
-  }, [streamUrl, streamType, onProgress]);
+  }, [videoUrl, streamType, needsProxy, onProgress]);
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -172,96 +197,130 @@ export function StreamPlayer({
   }
 
   return (
-    <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group">
-      <video
-        ref={videoRef}
-        poster={posterUrl}
-        className="w-full h-full object-contain"
-        playsInline
-        onClick={togglePlay}
-        title={title}
-      />
-
-      {/* Loading overlay */}
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 pointer-events-none">
-          <Loader2 className="h-10 w-10 text-white animate-spin" />
-        </div>
-      )}
-
-      {/* Custom controls */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity">
-        {/* Progress bar */}
-        <input
-          type="range"
-          min={0}
-          max={duration || 0}
-          step={0.1}
-          value={progress}
-          onChange={seek}
-          className="w-full h-1 rounded-full appearance-none bg-white/20 cursor-pointer mb-2
-            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3
-            [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-xan-crimson"
-          aria-label="Seek"
+    <div className="space-y-2">
+      <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group">
+        <video
+          ref={videoRef}
+          poster={posterUrl}
+          className="w-full h-full object-contain"
+          playsInline
+          onClick={togglePlay}
+          title={title}
         />
 
-        <div className="flex items-center justify-between text-white">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={togglePlay}
-              className="hover:text-xan-crimson transition-colors"
-              aria-label={playing ? "Pause" : "Play"}
-            >
-              {playing ? (
-                <Pause className="h-5 w-5" />
-              ) : (
-                <Play className="h-5 w-5 fill-white" />
-              )}
-            </button>
-            <button
-              onClick={toggleMute}
-              className="hover:text-xan-crimson transition-colors"
-              aria-label={muted ? "Unmute" : "Mute"}
-            >
-              {muted ? (
-                <VolumeX className="h-5 w-5" />
-              ) : (
-                <Volume2 className="h-5 w-5" />
-              )}
-            </button>
-            <span className="text-xs font-mono ml-1">
-              {formatTime(progress)} / {formatTime(duration)}
-            </span>
+        {/* Loading overlay */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 pointer-events-none">
+            <Loader2 className="h-10 w-10 text-white animate-spin" />
           </div>
+        )}
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs px-2 py-0.5 rounded bg-white/10 flex items-center gap-1">
-              <Settings className="h-3 w-3" />
-              HLS
-            </span>
-            <button
-              onClick={toggleFullscreen}
-              className="hover:text-xan-crimson transition-colors"
-              aria-label="Fullscreen"
-            >
-              <Maximize className="h-5 w-5" />
-            </button>
+        {/* Custom controls */}
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Progress bar */}
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.1}
+            value={progress}
+            onChange={seek}
+            className="w-full h-1 rounded-full appearance-none bg-white/20 cursor-pointer mb-2
+              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3
+              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-xan-crimson"
+            aria-label="Seek"
+          />
+
+          <div className="flex items-center justify-between text-white">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={togglePlay}
+                className="hover:text-xan-crimson transition-colors"
+                aria-label={playing ? "Pause" : "Play"}
+              >
+                {playing ? (
+                  <Pause className="h-5 w-5" />
+                ) : (
+                  <Play className="h-5 w-5 fill-white" />
+                )}
+              </button>
+              <button
+                onClick={toggleMute}
+                className="hover:text-xan-crimson transition-colors"
+                aria-label={muted ? "Unmute" : "Mute"}
+              >
+                {muted ? (
+                  <VolumeX className="h-5 w-5" />
+                ) : (
+                  <Volume2 className="h-5 w-5" />
+                )}
+              </button>
+              <span className="text-xs font-mono ml-1">
+                {formatTime(progress)} / {formatTime(duration)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {provider && provider !== "demo" && (
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  {provider}
+                </span>
+              )}
+              <button
+                onClick={toggleFullscreen}
+                className="hover:text-xan-crimson transition-colors"
+                aria-label="Fullscreen"
+              >
+                <Maximize className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Center play button when paused */}
+        {!playing && !loading && (
+          <button
+            onClick={togglePlay}
+            className="absolute inset-0 flex items-center justify-center"
+            aria-label="Play"
+          >
+            <div className="w-16 h-16 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl scale-95 hover:scale-100 transition-all">
+              <Play className="h-7 w-7 text-white fill-white ml-1" />
+            </div>
+          </button>
+        )}
       </div>
 
-      {/* Center play button when paused */}
-      {!playing && !loading && (
-        <button
-          onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center"
-          aria-label="Play"
-        >
-          <div className="w-16 h-16 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl scale-95 hover:scale-100 transition-all">
-            <Play className="h-7 w-7 text-white fill-white ml-1" />
-          </div>
-        </button>
+      {/* Provider badge below video */}
+      {provider && provider !== "demo" && (
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className="border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            {provider}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            Real anime stream from AllAnime
+          </span>
+        </div>
       )}
     </div>
   );
+}
+
+// ─── Helper: build proxy URL with headers as query params ───
+function buildProxyUrl(
+  streamUrl: string,
+  headers?: Record<string, string>,
+): string {
+  const params = new URLSearchParams({ url: streamUrl });
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      params.set(key, value);
+    }
+  }
+  return `/api/proxy_stream?${params.toString()}`;
 }

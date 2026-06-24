@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env.local
+.cf-cookie.json
+dev.log
+server.log
+upload
+skills
+examples
+.zscripts
+tool-results

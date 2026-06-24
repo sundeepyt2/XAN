@@ -1,25 +1,22 @@
 // app/api/stream/[id]/[ep]/route.ts
-// Server-side stream proxy.
+// ✅ Stream proxy — new pipeline ported from SNI.
 //
-// Flow (tries each in order):
-//   1. AllAnime GraphQL → find show by AniList ID → fetch stream sources
-//      (Usually fails — AllAnime's /episodes endpoint is Cloudflare-protected)
-//   2. Consumet (if CONSUMET_URL set) → animepahe two-step flow
-//   3. Mock HLS fallback (public test streams)
-//
-// Whatever returns a valid stream URL first wins; the rest are skipped.
+// Flow:
+//   1. Find AllAnime show by AniList ID + title
+//   2. getEpisodeSources() — persisted GraphQL query (NO Cloudflare!)
+//   3. For each source: extractStreamUrl() (Yt-mp4 / Megacloud / Vixcloud / etc.)
+//   4. Return first working stream
+//   5. Consumet fallback (if CONSUMET_URL set)
+//   6. Demo HLS emergency fallback
 
 import { NextResponse } from "next/server";
-import {
-  findShowByAniListId,
-  fetchAllAnimeStreamSources,
-} from "@/lib/allanime";
+import { findShowByAniListId, getEpisodeStreams } from "@/lib/allanime";
 import { fetchConsumetStream, getConsumetConfig } from "@/lib/consumet";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
-// ─── Mock HLS streams (final fallback) ───
+// ─── Mock HLS streams (emergency fallback) ───
 const MOCK_STREAMS: { url: string; quality: string }[] = [
   {
     url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -43,6 +40,7 @@ function mockResponse(animeId: number, episode: number, reason?: string) {
     duration: 600,
     episodeTitle: `Episode ${episode}`,
     thumbnail: null,
+    provider: "demo",
     fallbackReason: reason ?? null,
   };
 }
@@ -66,33 +64,34 @@ export async function GET(
   const title = url.searchParams.get("title") || "";
   const allowDemo = url.searchParams.get("allowDemo") === "true";
 
-  // ─── 1. Try AllAnime (unless allowDemo is set — then skip straight to demo) ───
+  // ─── 1. Try AllAnime (persisted GraphQL — no CF!) ───
   if (!allowDemo && title) {
     try {
       const show = await findShowByAniListId(animeId, title);
       if (show) {
-        const sources = await fetchAllAnimeStreamSources(
-          show._id,
-          String(episode),
-        );
-        if (sources && sources.length > 0) {
-          const picked = sources[0];
+        const streams = await getEpisodeStreams(show._id, String(episode), "sub");
+        if (streams.length > 0) {
+          const picked = streams[0];
           if (picked && picked.url) {
             return NextResponse.json({
               stream: {
                 url: picked.url,
-                type: picked.url.includes(".m3u8") ? "hls" : "mp4",
+                type: picked.type,
                 quality: picked.quality,
               },
-              sources: sources.map((s) => ({
+              sources: streams.map((s) => ({
                 url: s.url,
-                type: s.url.includes(".m3u8") ? ("hls" as const) : ("mp4" as const),
+                type: s.type,
                 quality: s.quality,
+                sourceName: s.sourceName,
+                headers: s.headers,
               })),
               duration: null,
               episodeTitle: `Episode ${episode}`,
               thumbnail: null,
               provider: "allanime",
+              sourceName: picked.sourceName,
+              headers: picked.headers,
             });
           }
         }
@@ -102,7 +101,7 @@ export async function GET(
     }
   }
 
-  // ─── 2. Try Consumet ───
+  // ─── 2. Try Consumet (if configured) ───
   const cfg = getConsumetConfig();
   if (cfg.configured) {
     const stream = await fetchConsumetStream(animeId, episode);
@@ -122,9 +121,9 @@ export async function GET(
     }
   }
 
-  // ─── 3. Fallback to mock ───
+  // ─── 3. Emergency demo fallback ───
   const reasons: string[] = [];
-  if (title) reasons.push("AllAnime stream endpoint is Cloudflare-protected");
+  if (title) reasons.push("AllAnime returned no playable sources");
   if (!cfg.configured) reasons.push("CONSUMET_URL not set");
   else reasons.push("Consumet returned no sources");
 
