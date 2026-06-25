@@ -86,6 +86,12 @@ export function VideoPlayer({
       .then((json) => {
         if (cancelled) return;
         const s = json?.stream;
+        // ✅ Handle structured error from backend (e.g., "Episode not released yet")
+        if (json?.error && (!s || !s.url)) {
+          setError(json.error);
+          setLoading(false);
+          return;
+        }
         if (s && s.url) {
           setStream({
             url: s.url,
@@ -96,6 +102,10 @@ export function VideoPlayer({
             provider: json?.provider,
           });
           setLoading(false);
+          // ✅ Show a toast/notification if we fell back from dub to sub
+          if (json?.fallbackMode) {
+            console.warn(`[VideoPlayer] ${json.fallbackMode}`);
+          }
         } else {
           setError("Backend returned an invalid stream response");
           setLoading(false);

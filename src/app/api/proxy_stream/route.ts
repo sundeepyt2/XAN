@@ -136,3 +136,18 @@ export async function GET(request: Request) {
     request,
   );
 }
+
+// ✅ Handle CORS preflight (OPTIONS) requests — browsers send these before
+// cross-origin POST requests. Without this handler, the proxy POST fails
+// silently in browsers that enforce preflight.
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "range, content-type, if-range, if-modified-since",
+      "access-control-max-age": "86400",
+    },
+  });
+}

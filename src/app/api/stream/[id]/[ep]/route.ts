@@ -1,4 +1,10 @@
 // app/api/stream/[id]/[ep]/route.ts
+//
+// ✅ Bug fixes:
+// - When dub is requested but unavailable, falls back to sub instead of demo
+// - Returns structured error when episode not yet released (instead of silent demo)
+// - Better error context in response
+
 import { NextResponse } from "next/server";
 import {
   findShowByAniListId,
@@ -60,26 +66,56 @@ export async function GET(
   const title = url.searchParams.get("title") || "";
   const allowDemo = url.searchParams.get("allowDemo") === "true";
   // ✅ Sub/Dub switching: accept type=sub|dub, default to sub
-  const mode = url.searchParams.get("type") === "dub" ? "dub" : "sub";
+  const requestedMode = url.searchParams.get("type") === "dub" ? "dub" : "sub";
 
   if (!allowDemo && title) {
     try {
       const show = await findShowByAniListId(animeId, title);
       if (show) {
-        const result = await extractStreamUrl(show._id, String(episode), mode);
-        if (result && result.sources.length > 0) {
-          const picked = result.sources[0];
-          if (picked) {
-            return NextResponse.json({
-              stream: streamResultToJSON(picked),
-              sources: result.sources.map(streamResultToJSON),
-              duration: null,
-              episodeTitle: `Episode ${episode}`,
-              thumbnail: null,
-              provider: "allanime",
-              failures: result.failures,
-            });
+        // ✅ Try requested mode first, then fall back to sub if dub fails
+        const modesToTry: ("sub" | "dub")[] =
+          requestedMode === "dub" ? ["dub", "sub"] : ["sub"];
+
+        let lastResult: { sources: StreamResult[]; failures: { source: string; reason: string }[] } | null = null;
+
+        for (const mode of modesToTry) {
+          const result = await extractStreamUrl(show._id, String(episode), mode);
+          if (result && result.sources.length > 0) {
+            const picked = result.sources[0];
+            if (picked) {
+              return NextResponse.json({
+                stream: streamResultToJSON(picked),
+                sources: result.sources.map(streamResultToJSON),
+                duration: null,
+                episodeTitle: `Episode ${episode}`,
+                thumbnail: null,
+                provider: "allanime",
+                mode, // ✅ tell the client which mode actually worked
+                failures: result.failures,
+                // ✅ If we fell back from dub to sub, tell the client
+                ...(requestedMode === "dub" && mode === "sub"
+                  ? { fallbackMode: "dub unavailable, fell back to sub" }
+                  : {}),
+              });
+            }
           }
+          if (result) lastResult = result;
+        }
+
+        // ✅ If we got here, both modes failed but AllAnime found the show.
+        // Check if the episode is released yet.
+        const sub = show.availableEpisodes?.sub ?? 0;
+        if (episode > sub) {
+          return NextResponse.json({
+            stream: null,
+            sources: [],
+            duration: null,
+            episodeTitle: `Episode ${episode}`,
+            thumbnail: null,
+            provider: "allanime",
+            error: `Episode ${episode} hasn't been released yet. Only ${sub} episode(s) available.`,
+            failures: lastResult?.failures ?? [],
+          });
         }
       }
     } catch (err) {

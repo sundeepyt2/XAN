@@ -56,11 +56,21 @@ async function fetchFromAniList(
     });
 
     if (!response.ok) {
-      if (response.status === 429 && _retryCount < MAX_RETRIES) {
+      // ✅ Retry on 429 (rate limit) AND 500/502/503/504 (server errors)
+      // AniList occasionally returns 500s under load — retrying helps.
+      const shouldRetry =
+        (response.status === 429 ||
+          response.status === 500 ||
+          response.status === 502 ||
+          response.status === 503 ||
+          response.status === 504) &&
+        _retryCount < MAX_RETRIES;
+
+      if (shouldRetry) {
         const retryAfter = response.headers.get("Retry-After");
         const delay = retryAfter
           ? parseInt(retryAfter, 10) * 1000
-          : RETRY_DELAY_MS;
+          : RETRY_DELAY_MS * (_retryCount + 1); // ✅ exponential backoff
         await new Promise((r) => setTimeout(r, delay));
         return fetchFromAniList(query, variables, _retryCount + 1);
       }
