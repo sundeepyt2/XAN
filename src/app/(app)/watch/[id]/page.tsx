@@ -55,6 +55,10 @@ function WatchPageInner({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [showAutoPlay, setShowAutoPlay] = useState(false);
+  const [dubAvailable, setDubAvailable] = useState(false);
+
+  // ✅ Sub/Dub: read initial mode from URL ?type=dub
+  const initialMode = searchParams.get("type") === "dub" ? "dub" : "sub";
   const { history, addEntry } = useWatchHistory();
 
   const savedEntry = useMemo(
@@ -68,6 +72,51 @@ function WatchPageInner({ params }: PageProps) {
   const autoResumeTime = savedEntry?.timestamp && savedEntry.timestamp > 5
     ? savedEntry.timestamp
     : undefined;
+
+  // ✅ Check AllAnime for dub availability when anime loads
+  useEffect(() => {
+    if (!anime) return;
+    let cancelled = false;
+    const title = getTitle(anime.title);
+    if (!title.trim()) return;
+
+    fetch(`/api/allanime?q=${encodeURIComponent(title)}&limit=5`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return await res.json();
+      })
+      .then((json) => {
+        if (cancelled || !json) return;
+        const edges = json?.edges ?? [];
+        const match = edges.find(
+          (e: { aniListId?: string | null }) =>
+            e.aniListId === String(animeId),
+        );
+        const show = match ?? edges[0];
+        if (show?.availableEpisodes?.dub && show.availableEpisodes.dub > 0) {
+          setDubAvailable(true);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [anime, animeId]);
+
+  // ✅ Sub/Dub mode change handler — updates URL for shareable links
+  const handleModeChange = useCallback(
+    (newMode: "sub" | "dub") => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (newMode === "dub") {
+        params.set("type", "dub");
+      } else {
+        params.delete("type");
+      }
+      router.replace(`/watch/${animeId}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, animeId],
+  );
 
   useEffect(() => {
     if (isNaN(animeId)) {
@@ -203,6 +252,9 @@ function WatchPageInner({ params }: PageProps) {
               skipIntroOffset={85}
               onEpisodeEnd={handleEpisodeEnd}
               onProgress={handleProgress}
+              initialMode={initialMode}
+              dubAvailable={dubAvailable}
+              onModeChange={handleModeChange}
             />
             {showAutoPlay && nextEp && (
               <AutoPlayOverlay

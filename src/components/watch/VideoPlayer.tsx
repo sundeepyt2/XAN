@@ -1,6 +1,7 @@
 "use client";
 
 // components/watch/VideoPlayer.tsx
+// ✅ Sub/Dub switching: accepts initialMode + dubAvailable, passes mode to API
 import { useState, useEffect, useCallback } from "react";
 import { StreamPlayer } from "./StreamPlayer";
 import { AlertCircle, Loader2 } from "lucide-react";
@@ -14,6 +15,12 @@ interface VideoPlayerProps {
   skipIntroOffset?: number;
   onEpisodeEnd?: () => void;
   onProgress?: (currentTime: number, duration: number) => void;
+  /** Initial sub/dub mode (default "sub") */
+  initialMode?: "sub" | "dub";
+  /** Whether dub is available for this anime (from AllAnime cross-ref) */
+  dubAvailable?: boolean;
+  /** Called when user switches sub/dub — parent can update URL */
+  onModeChange?: (mode: "sub" | "dub") => void;
 }
 
 interface StreamData {
@@ -34,10 +41,14 @@ export function VideoPlayer({
   skipIntroOffset,
   onEpisodeEnd,
   onProgress,
+  initialMode = "sub",
+  dubAvailable = false,
+  onModeChange,
 }: VideoPlayerProps) {
   const [stream, setStream] = useState<StreamData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"sub" | "dub">(initialMode);
 
   const stableOnProgress = useCallback(
     (t: number, d: number) => onProgress?.(t, d),
@@ -46,6 +57,14 @@ export function VideoPlayer({
 
   const stableOnEpisodeEnd = useCallback(() => onEpisodeEnd?.(), [onEpisodeEnd]);
 
+  const handleModeChange = useCallback(
+    (newMode: "sub" | "dub") => {
+      setMode(newMode);
+      onModeChange?.(newMode);
+    },
+    [onModeChange],
+  );
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -53,8 +72,10 @@ export function VideoPlayer({
     setStream(null);
 
     const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
+    // ✅ Pass mode as type=sub|dub to the stream API
+    const modeParam = `&type=${mode}`;
 
-    fetch(`/api/stream/${animeId}/${episode}?${titleParam}`)
+    fetch(`/api/stream/${animeId}/${episode}?${titleParam}${modeParam}`)
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -89,7 +110,7 @@ export function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [animeId, episode, animeTitle]);
+  }, [animeId, episode, animeTitle, mode]);
 
   if (error) {
     return (
@@ -105,7 +126,9 @@ export function VideoPlayer({
     return (
       <div className="w-full aspect-video bg-zinc-900 rounded-lg flex flex-col items-center justify-center border border-xan-border">
         <Loader2 className="h-10 w-10 text-xan-crimson animate-spin mb-3" />
-        <p className="text-sm text-muted-foreground">Loading episode {episode}…</p>
+        <p className="text-sm text-muted-foreground">
+          Loading episode {episode} ({mode.toUpperCase()})…
+        </p>
       </div>
     );
   }
@@ -122,6 +145,9 @@ export function VideoPlayer({
       skipIntroOffset={skipIntroOffset}
       onEpisodeEnd={stableOnEpisodeEnd}
       onProgress={stableOnProgress}
+      mode={mode}
+      onModeChange={handleModeChange}
+      dubAvailable={dubAvailable}
     />
   );
 }

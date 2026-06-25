@@ -59,12 +59,14 @@ export async function GET(
   const url = new URL(request.url);
   const title = url.searchParams.get("title") || "";
   const allowDemo = url.searchParams.get("allowDemo") === "true";
+  // ✅ Sub/Dub switching: accept type=sub|dub, default to sub
+  const mode = url.searchParams.get("type") === "dub" ? "dub" : "sub";
 
   if (!allowDemo && title) {
     try {
       const show = await findShowByAniListId(animeId, title);
       if (show) {
-        const result = await extractStreamUrl(show._id, String(episode), "sub");
+        const result = await extractStreamUrl(show._id, String(episode), mode);
         if (result && result.sources.length > 0) {
           const picked = result.sources[0];
           if (picked) {
