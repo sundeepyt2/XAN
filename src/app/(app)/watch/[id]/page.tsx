@@ -317,6 +317,7 @@ function WatchPageInner({ params }: PageProps) {
 
         <EpisodePanel
           animeId={anime.id}
+          animeTitle={title}
           episodeCount={anime.episodes}
           currentEpisode={currentEpisode}
           nextAiringEpisode={anime.nextAiringEpisode}

@@ -85,6 +85,7 @@ export default async function AnimeDetailPage({ params }: Props) {
             <AnimeInfo anime={anime} />
             <EpisodeGrid
               animeId={anime.id}
+              animeTitle={getTitle(anime.title)}
               episodeCount={anime.episodes}
               nextAiringEpisode={anime.nextAiringEpisode}
             />

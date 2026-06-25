@@ -3,12 +3,17 @@
 // components/anime/EpisodeGrid.tsx
 //
 // ✅ Episode unreleased grayout: uses AniList's `nextAiringEpisode` to determine
-// which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
-// non-clickable, with a small "Upcoming" badge and tooltip showing when they air.
+//    which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
+//    non-clickable, with a small "Upcoming" badge and tooltip showing when they air.
+//
+// ✅ AllAnime fallback: when AniList's `episodeCount` is null (unknown), fetches
+//    AllAnime's `availableEpisodes.sub` count via /api/allanime to get the real
+//    episode count. This fixes the "Episode count unknown — showing first 12 by
+//    default" issue.
 
 import Link from "next/link";
-import { useState } from "react";
-import { Play, Search, Clock } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Play, Search, Clock, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -16,6 +21,7 @@ import type { NextAiringEpisode } from "@/types/anime";
 
 interface EpisodeGridProps {
   animeId: number;
+  animeTitle: string;
   episodeCount: number | null;
   /** AniList's nextAiringEpisode — used to determine which episodes haven't aired yet. */
   nextAiringEpisode?: NextAiringEpisode | null;
@@ -50,11 +56,71 @@ function formatAiringTime(airingAt: number): string {
   return `Airs in ${mins}m`;
 }
 
-export function EpisodeGrid({ animeId, episodeCount, nextAiringEpisode }: EpisodeGridProps) {
+export function EpisodeGrid({
+  animeId,
+  animeTitle,
+  episodeCount,
+  nextAiringEpisode,
+}: EpisodeGridProps) {
   const [query, setQuery] = useState("");
+  // AllAnime fallback episode count — fetched when AniList's episodeCount is null
+  const [allAnimeCount, setAllAnimeCount] = useState<number | null>(null);
+  const [fetchingAllAnime, setFetchingAllAnime] = useState(false);
 
-  const isUnknown = episodeCount == null;
-  const total = isUnknown ? 12 : episodeCount;
+  // ✅ When AniList's episode count is unknown, fetch AllAnime's availableEpisodes.sub
+  // to get the real count. This fixes the "Episode count unknown — showing first 12"
+  // issue by using AllAnime's cross-reference data.
+  useEffect(() => {
+    if (episodeCount != null) return; // AniList has the count, no need to fetch
+    if (!animeTitle.trim()) return;
+
+    let cancelled = false;
+    setFetchingAllAnime(true);
+
+    fetch(`/api/allanime?q=${encodeURIComponent(animeTitle)}&limit=5`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const json = await res.json();
+        return json;
+      })
+      .then((json) => {
+        if (cancelled || !json) return;
+        const edges = json?.edges ?? [];
+        // Find the show matching this AniList ID
+        const match = edges.find(
+          (e: { aniListId?: string | null }) =>
+            e.aniListId === String(animeId),
+        );
+        // If no exact match, use the first result (fuzzy match)
+        const show = match ?? edges[0];
+        if (show?.availableEpisodes) {
+          const sub = show.availableEpisodes.sub ?? 0;
+          const dub = show.availableEpisodes.dub ?? 0;
+          const raw = show.availableEpisodes.raw ?? 0;
+          const count = Math.max(sub, dub, raw);
+          if (count > 0) {
+            setAllAnimeCount(count);
+          }
+        }
+      })
+      .catch(() => {
+        // silently ignore — we'll fall back to 12
+      })
+      .finally(() => {
+        if (!cancelled) setFetchingAllAnime(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [animeId, animeTitle, episodeCount]);
+
+  // Effective episode count: AniList → AllAnime → 12 default
+  const isUnknown = episodeCount == null && allAnimeCount == null;
+  const effectiveCount = episodeCount ?? allAnimeCount ?? 12;
+  const usingAllAnimeFallback = episodeCount == null && allAnimeCount != null;
+
+  const total = effectiveCount;
   const cappedTotal = Math.min(total, MAX_RENDERED);
   const isCapped = total > MAX_RENDERED;
   const episodes = Array.from({ length: cappedTotal }, (_, i) => i + 1);
@@ -82,12 +148,24 @@ export function EpisodeGrid({ animeId, episodeCount, nextAiringEpisode }: Episod
         </div>
       </div>
 
-      {isUnknown && (
+      {/* Status messages */}
+      {fetchingAllAnime && (
+        <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Checking AllAnime for episode count…
+        </p>
+      )}
+      {isUnknown && !fetchingAllAnime && (
         <p className="text-xs text-muted-foreground italic">
           Episode count unknown — showing first 12 by default.
         </p>
       )}
-      {!isUnknown && episodeCount === 0 && (
+      {usingAllAnimeFallback && !fetchingAllAnime && (
+        <p className="text-xs text-emerald-500/80 italic">
+          Showing {total} episodes (via AllAnime cross-reference).
+        </p>
+      )}
+      {!isUnknown && !usingAllAnimeFallback && episodeCount === 0 && (
         <p className="text-xs text-muted-foreground italic">
           No episodes available for this anime yet.
         </p>

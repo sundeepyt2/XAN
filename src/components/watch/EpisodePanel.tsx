@@ -4,17 +4,23 @@
 // Sidebar list of episodes for the watch page
 //
 // ✅ Episode unreleased grayout: uses AniList's `nextAiringEpisode` to determine
-// which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
-// non-clickable, with a clock icon + countdown tooltip.
+//    which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
+//    non-clickable, with a clock icon + countdown tooltip.
+//
+// ✅ AllAnime fallback: when AniList's `episodeCount` is null (unknown), fetches
+//    AllAnime's `availableEpisodes.sub` count via /api/allanime to get the real
+//    episode count.
 
 import Link from "next/link";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle2, Play, Clock } from "lucide-react";
+import { CheckCircle2, Play, Clock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useState, useEffect } from "react";
 import type { NextAiringEpisode } from "@/types/anime";
 
 interface EpisodePanelProps {
   animeId: number;
+  animeTitle: string;
   episodeCount: number | null;
   currentEpisode: number;
   /** AniList's nextAiringEpisode — used to determine which episodes haven't aired yet. */
@@ -42,11 +48,59 @@ function formatAiringTime(airingAt: number): string {
 
 export function EpisodePanel({
   animeId,
+  animeTitle,
   episodeCount,
   currentEpisode,
   nextAiringEpisode,
 }: EpisodePanelProps) {
-  const total = episodeCount ?? 12;
+  const [allAnimeCount, setAllAnimeCount] = useState<number | null>(null);
+  const [fetchingAllAnime, setFetchingAllAnime] = useState(false);
+
+  // ✅ When AniList's episode count is unknown, fetch AllAnime's availableEpisodes.sub
+  useEffect(() => {
+    if (episodeCount != null) return;
+    if (!animeTitle.trim()) return;
+
+    let cancelled = false;
+    setFetchingAllAnime(true);
+
+    fetch(`/api/allanime?q=${encodeURIComponent(animeTitle)}&limit=5`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return await res.json();
+      })
+      .then((json) => {
+        if (cancelled || !json) return;
+        const edges = json?.edges ?? [];
+        const match = edges.find(
+          (e: { aniListId?: string | null }) =>
+            e.aniListId === String(animeId),
+        );
+        const show = match ?? edges[0];
+        if (show?.availableEpisodes) {
+          const sub = show.availableEpisodes.sub ?? 0;
+          const dub = show.availableEpisodes.dub ?? 0;
+          const raw = show.availableEpisodes.raw ?? 0;
+          const count = Math.max(sub, dub, raw);
+          if (count > 0) {
+            setAllAnimeCount(count);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setFetchingAllAnime(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [animeId, animeTitle, episodeCount]);
+
+  const effectiveCount = episodeCount ?? allAnimeCount ?? 12;
+  const usingAllAnimeFallback = episodeCount == null && allAnimeCount != null;
+
+  const total = effectiveCount;
   const cappedTotal = Math.min(total, MAX_RENDERED);
   const episodes = Array.from({ length: cappedTotal }, (_, i) => i + 1);
 
@@ -66,6 +120,15 @@ export function EpisodePanel({
             <span className="ml-2 text-xan-crimson/80">
               · {total - latestAired} upcoming
             </span>
+          )}
+          {fetchingAllAnime && (
+            <span className="ml-2 flex items-center gap-1 text-muted-foreground/70">
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              checking AllAnime
+            </span>
+          )}
+          {usingAllAnimeFallback && !fetchingAllAnime && (
+            <span className="ml-2 text-emerald-500/70">· via AllAnime</span>
           )}
         </p>
       </div>
