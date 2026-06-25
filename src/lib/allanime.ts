@@ -27,7 +27,10 @@
 //
 // No cf_clearance cookie required.
 
-import { createHash, createDecipheriv } from "crypto";
+// ✅ Cloudflare Workers compat: import from node:crypto and node:buffer
+// Workers support these via the `nodejs_compat` flag in wrangler.toml
+import { createHash, createDecipheriv } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { getStoredCookie } from "./cf-cookie-store";
 
@@ -137,7 +140,10 @@ async function gql<T>(
         Origin: ORIGIN,
       },
       body: JSON.stringify({ query, variables }),
-      next: { revalidate: 3600 },
+      // ✅ Cloudflare Workers compat: only add next.revalidate in Node.js env
+      ...(typeof process !== "undefined" && process.versions?.node
+        ? { next: { revalidate: 3600 } }
+        : {}),
     });
 
     if (!res.ok) {
@@ -288,7 +294,10 @@ export async function getEpisodeSources(
         Referer: REFERER,
         Origin: ORIGIN,
       },
-      next: { revalidate: 600 },
+      // ✅ Cloudflare Workers compat: only add next.revalidate in Node.js env
+      ...(typeof process !== "undefined" && process.versions?.node
+        ? { next: { revalidate: 600 } }
+        : {}),
     });
 
     if (!res.ok) {

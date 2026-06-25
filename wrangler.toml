@@ -1,0 +1,9 @@
+# wrangler.toml — Cloudflare Workers config
+# ✅ Enable nodejs_compat flag so Node.js APIs (crypto, buffer, fs) work on Workers
+
+name = "xan"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NODE_ENV = "production"

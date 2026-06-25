@@ -70,7 +70,10 @@ async function fetchWithTimeout(url: string): Promise<Response> {
     return await fetch(url, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
-      next: { revalidate: 600 }, // cache episode lists 10 min
+      // ✅ Cloudflare Workers compat: only add next.revalidate in Node.js env
+      ...(typeof process !== "undefined" && process.versions?.node
+        ? { next: { revalidate: 600 } }
+        : {}),
     });
   } finally {
     clearTimeout(timeout);

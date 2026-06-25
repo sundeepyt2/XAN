@@ -2,11 +2,21 @@
 // ✅ Persistent server-side storage for Cloudflare cookies.
 // Stores the full cookie string (not just cf_clearance) so multiple CF cookies
 // can be passed through. Also stores the user-agent and a client-side flag.
+//
+// ✅ Cloudflare Workers compat: fs/path not available on Workers.
+// Since the new streaming pipeline doesn't need the CF cookie, these functions
+// return null/empty on Workers. The file-based storage only works in Node.js.
 
-import { promises as fs } from "fs";
-import path from "path";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
-const COOKIE_FILE = path.join(process.cwd(), ".cf-cookie.json");
+// ✅ Detect if we're on Cloudflare Workers (no fs support)
+const isCloudflareWorker =
+  typeof process !== "undefined" && process.env?.CF_PAGES === "1";
+
+const COOKIE_FILE = isCloudflareWorker
+  ? "" // No file system on Workers
+  : path.join(process.cwd(), ".cf-cookie.json");
 
 export interface StoredCookie {
   // The full cookie header value, e.g. "cf_clearance=abc123; __cf_bm=xyz789"
@@ -22,6 +32,7 @@ let cached: StoredCookie | null = null;
 let cacheLoadedAt = 0;
 
 async function readFromDisk(): Promise<StoredCookie | null> {
+  if (isCloudflareWorker || !COOKIE_FILE) return null; // No fs on Workers
   try {
     const raw = await fs.readFile(COOKIE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
@@ -35,6 +46,7 @@ async function readFromDisk(): Promise<StoredCookie | null> {
 }
 
 async function writeToDisk(cookie: StoredCookie | null): Promise<void> {
+  if (isCloudflareWorker || !COOKIE_FILE) return; // No fs on Workers
   try {
     if (cookie) {
       await fs.writeFile(COOKIE_FILE, JSON.stringify(cookie, null, 2), "utf-8");

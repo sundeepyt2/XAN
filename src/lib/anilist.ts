@@ -40,49 +40,58 @@ async function fetchFromAniList(
   variables: Record<string, unknown>,
   _retryCount = 0,
 ): Promise<unknown | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
+  // ✅ Cloudflare Workers compatibility:
+  // - Don't use `next: { revalidate }` (Next.js-specific, breaks on Workers)
+  // - Don't use AbortController/signal (limited support on Workers)
+  // - Use a manual timeout race instead
   try {
-    const response = await fetch(ANILIST_URL, {
+    // Build fetch options — only include Next.js extensions in Node.js env
+    const fetchOptions: RequestInit & { next?: { revalidate?: number } } = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
       body: JSON.stringify({ query, variables }),
-      signal: controller.signal,
-      next: { revalidate: 300 },
-    });
+    };
 
-    if (!response.ok) {
-      // ✅ Retry on 429 (rate limit) AND 500/502/503/504 (server errors)
-      const shouldRetry =
-        (response.status === 429 ||
-          response.status === 500 ||
-          response.status === 502 ||
-          response.status === 503 ||
-          response.status === 504) &&
-        _retryCount < MAX_RETRIES;
-
-      if (shouldRetry) {
-        const retryAfter = response.headers.get("Retry-After");
-        const delay = retryAfter
-          ? parseInt(retryAfter, 10) * 1000
-          : RETRY_DELAY_MS * (_retryCount + 1);
-        await new Promise((r) => setTimeout(r, delay));
-        return fetchFromAniList(query, variables, _retryCount + 1);
-      }
-      // ✅ 404 is expected for non-existent anime IDs — don't log as error
-      if (response.status === 404) {
-        console.warn(`[AniList] 404: Resource not found (this is expected for invalid IDs)`);
-      } else {
-        console.error(`[AniList] HTTP ${response.status}: ${response.statusText}`);
-      }
-      return null;
+    // ✅ Only add `next: { revalidate }` in Node.js (Next.js) environment
+    // Cloudflare Workers don't support this and throw an error
+    if (typeof process !== "undefined" && process.versions?.node) {
+      fetchOptions.next = { revalidate: 300 };
     }
 
-    return await response.json();
+    // ✅ Only add AbortSignal in environments that support it properly
+    if (typeof AbortController !== "undefined") {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      fetchOptions.signal = controller.signal;
+
+      // Race between fetch and timeout
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          resolve(null);
+        }, REQUEST_TIMEOUT_MS);
+      });
+
+      const response = (await Promise.race([
+        fetch(ANILIST_URL, fetchOptions),
+        timeoutPromise,
+      ])) as Response | null;
+
+      clearTimeout(timeout);
+
+      if (!response) {
+        console.error("[AniList] Request timed out after", REQUEST_TIMEOUT_MS, "ms");
+        return null;
+      }
+
+      return await handleResponse(response, query, variables, _retryCount);
+    }
+
+    // Fallback: no AbortController (very old environments)
+    const response = await fetch(ANILIST_URL, fetchOptions);
+    return await handleResponse(response, query, variables, _retryCount);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       console.error("[AniList] Request timed out after", REQUEST_TIMEOUT_MS, "ms");
@@ -90,9 +99,42 @@ async function fetchFromAniList(
       console.error("[AniList] Fetch failed:", error);
     }
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
+}
+
+// ✅ Extracted response handler to avoid duplication
+async function handleResponse(
+  response: Response,
+  query: string,
+  variables: Record<string, unknown>,
+  _retryCount: number,
+): Promise<unknown | null> {
+  if (!response.ok) {
+    const shouldRetry =
+      (response.status === 429 ||
+        response.status === 500 ||
+        response.status === 502 ||
+        response.status === 503 ||
+        response.status === 504) &&
+      _retryCount < MAX_RETRIES;
+
+    if (shouldRetry) {
+      const retryAfter = response.headers.get("Retry-After");
+      const delay = retryAfter
+        ? parseInt(retryAfter, 10) * 1000
+        : RETRY_DELAY_MS * (_retryCount + 1);
+      await new Promise((r) => setTimeout(r, delay));
+      return fetchFromAniList(query, variables, _retryCount + 1);
+    }
+    if (response.status === 404) {
+      console.warn(`[AniList] 404: Resource not found (this is expected for invalid IDs)`);
+    } else {
+      console.error(`[AniList] HTTP ${response.status}: ${response.statusText}`);
+    }
+    return null;
+  }
+
+  return await response.json();
 }
 
 async function fetchList(

@@ -83,7 +83,10 @@ export async function fetchEpisodeStream(
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
-      next: { revalidate: 0 }, // streams are not cacheable
+      // ✅ Cloudflare Workers compat: only add next.revalidate in Node.js env
+      ...(typeof process !== "undefined" && process.versions?.node
+        ? { next: { revalidate: 0 } }
+        : {}),
     });
 
     if (!res.ok) {
