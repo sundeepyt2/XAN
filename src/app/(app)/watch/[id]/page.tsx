@@ -319,6 +319,7 @@ function WatchPageInner({ params }: PageProps) {
           animeId={anime.id}
           episodeCount={anime.episodes}
           currentEpisode={currentEpisode}
+          nextAiringEpisode={anime.nextAiringEpisode}
         />
       </div>
     </div>

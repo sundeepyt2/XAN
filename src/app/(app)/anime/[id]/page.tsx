@@ -83,7 +83,11 @@ export default async function AnimeDetailPage({ params }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-8">
             <AnimeInfo anime={anime} />
-            <EpisodeGrid animeId={anime.id} episodeCount={anime.episodes} />
+            <EpisodeGrid
+              animeId={anime.id}
+              episodeCount={anime.episodes}
+              nextAiringEpisode={anime.nextAiringEpisode}
+            />
           </div>
           <div className="space-y-8">
             {/* Bug 8 fix: wrap AllAnimeCrossReference in Suspense — slow AllAnime API

@@ -26,6 +26,8 @@ export const NextAiringEpisodeSchema = z
   .nullable()
   .default(null);
 
+export type NextAiringEpisode = z.infer<typeof NextAiringEpisodeSchema>;
+
 // ─── Cover Image Schema ───
 export const CoverImageSchema = z
   .object({

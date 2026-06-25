@@ -1,21 +1,56 @@
 "use client";
 
 // components/anime/EpisodeGrid.tsx
+//
+// ✅ Episode unreleased grayout: uses AniList's `nextAiringEpisode` to determine
+// which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
+// non-clickable, with a small "Upcoming" badge and tooltip showing when they air.
+
 import Link from "next/link";
 import { useState } from "react";
-import { Play, Search } from "lucide-react";
+import { Play, Search, Clock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import type { NextAiringEpisode } from "@/types/anime";
 
 interface EpisodeGridProps {
   animeId: number;
   episodeCount: number | null;
+  /** AniList's nextAiringEpisode — used to determine which episodes haven't aired yet. */
+  nextAiringEpisode?: NextAiringEpisode | null;
 }
 
 const MAX_RENDERED = 200;
 
-export function EpisodeGrid({ animeId, episodeCount }: EpisodeGridProps) {
+/**
+ * Returns the highest episode number that has already aired.
+ * - If `nextAiringEpisode` is null/undefined (no upcoming airing), all episodes
+ *   have aired → return Infinity (no grayout).
+ * - Otherwise, the next episode to air is `nextAiringEpisode.episode`, so the
+ *   latest aired episode is `nextAiringEpisode.episode - 1`.
+ */
+function getLatestAiredEpisode(next?: NextAiringEpisode | null): number {
+  if (!next || typeof next.episode !== "number") return Infinity;
+  return next.episode - 1;
+}
+
+/**
+ * Format the airing timestamp as a human-readable countdown/date.
+ */
+function formatAiringTime(airingAt: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = airingAt - now;
+  if (diff <= 0) return "Airing soon";
+  const days = Math.floor(diff / 86400);
+  const hours = Math.floor((diff % 86400) / 3600);
+  const mins = Math.floor((diff % 3600) / 60);
+  if (days > 0) return `Airs in ${days}d ${hours}h`;
+  if (hours > 0) return `Airs in ${hours}h ${mins}m`;
+  return `Airs in ${mins}m`;
+}
+
+export function EpisodeGrid({ animeId, episodeCount, nextAiringEpisode }: EpisodeGridProps) {
   const [query, setQuery] = useState("");
 
   const isUnknown = episodeCount == null;
@@ -23,6 +58,9 @@ export function EpisodeGrid({ animeId, episodeCount }: EpisodeGridProps) {
   const cappedTotal = Math.min(total, MAX_RENDERED);
   const isCapped = total > MAX_RENDERED;
   const episodes = Array.from({ length: cappedTotal }, (_, i) => i + 1);
+
+  const latestAired = getLatestAiredEpisode(nextAiringEpisode);
+  const hasUpcoming = nextAiringEpisode != null;
 
   const filtered = query
     ? episodes.filter((n) => String(n).includes(query.trim()))
@@ -59,23 +97,66 @@ export function EpisodeGrid({ animeId, episodeCount }: EpisodeGridProps) {
           Showing first {MAX_RENDERED} of {total} episodes. Use search to find specific episodes.
         </p>
       )}
+      {hasUpcoming && (
+        <p className="text-xs text-muted-foreground/80 italic flex items-center gap-1.5">
+          <Clock className="h-3 w-3" />
+          Episodes{" "}
+          <span className="text-foreground/70 font-medium">
+            {nextAiringEpisode!.episode}–{total}
+          </span>{" "}
+          haven&apos;t aired yet — shown in grayscale.
+        </p>
+      )}
 
       <ScrollArea className="h-72 rounded-lg border border-xan-border bg-xan-card/50">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-3">
           {filtered.length > 0 ? (
-            filtered.map((n) => (
-              <Button
-                key={n}
-                variant="ghost"
-                asChild
-                className="justify-start h-auto py-2 px-3 bg-xan-card hover:bg-xan-card-hover border border-xan-border hover:border-xan-crimson/40 text-left"
-              >
-                <Link href={`/watch/${animeId}?ep=${n}`}>
-                  <Play className="h-3 w-3 text-xan-crimson mr-2 flex-shrink-0" />
-                  <span className="text-sm text-foreground">Episode {n}</span>
-                </Link>
-              </Button>
-            ))
+            filtered.map((n) => {
+              const isReleased = n <= latestAired;
+              const isNext = hasUpcoming && n === nextAiringEpisode!.episode;
+              const airingHint =
+                isNext && nextAiringEpisode
+                  ? formatAiringTime(nextAiringEpisode.airingAt)
+                  : isReleased
+                    ? undefined
+                    : "Not yet aired";
+
+              if (!isReleased) {
+                // Unreleased episode: grayscale, no link, show "Upcoming" badge
+                return (
+                  <div
+                    key={n}
+                    title={airingHint}
+                    className="flex items-center justify-start h-auto py-2 px-3 bg-xan-card/30 border border-xan-border/50 text-left cursor-not-allowed opacity-50 grayscale select-none"
+                  >
+                    <Clock className="h-3 w-3 text-muted-foreground mr-2 flex-shrink-0" />
+                    <span className="text-sm text-muted-foreground line-through decoration-muted-foreground/40">
+                      Episode {n}
+                    </span>
+                    {isNext && (
+                      <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-xan-crimson/15 text-xan-crimson border border-xan-crimson/30 font-mono">
+                        SOON
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+
+              // Released episode: clickable link with play button
+              return (
+                <Button
+                  key={n}
+                  variant="ghost"
+                  asChild
+                  className="justify-start h-auto py-2 px-3 bg-xan-card hover:bg-xan-card-hover border border-xan-border hover:border-xan-crimson/40 text-left"
+                >
+                  <Link href={`/watch/${animeId}?ep=${n}`}>
+                    <Play className="h-3 w-3 text-xan-crimson mr-2 flex-shrink-0" />
+                    <span className="text-sm text-foreground">Episode {n}</span>
+                  </Link>
+                </Button>
+              );
+            })
           ) : (
             <p className="col-span-full text-sm text-muted-foreground text-center py-6">
               No episodes found.
