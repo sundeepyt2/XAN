@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/allanime/route.ts
 // Server-side proxy to AllAnime GraphQL API.
 // Used by the anime detail page to cross-reference AniList ↔ AllAnime.

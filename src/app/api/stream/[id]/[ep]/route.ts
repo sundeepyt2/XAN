@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/stream/[id]/[ep]/route.ts
 //
 // ✅ Bug fixes:

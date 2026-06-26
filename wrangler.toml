@@ -1,9 +1,11 @@
-# wrangler.toml — Cloudflare Workers config
+# wrangler.toml — Cloudflare Pages config for Next.js
 # ✅ Enable nodejs_compat flag so Node.js APIs (crypto, buffer, fs) work on Workers
+# ✅ Configured for Cloudflare Pages (not Workers) since Next.js deploys as Pages
 
 name = "xan"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".next"
 
 [vars]
 NODE_ENV = "production"

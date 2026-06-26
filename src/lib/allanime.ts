@@ -27,10 +27,9 @@
 //
 // No cf_clearance cookie required.
 
-// ✅ Cloudflare Workers compat: import from node:crypto and node:buffer
-// Workers support these via the `nodejs_compat` flag in wrangler.toml
-import { createHash, createDecipheriv } from "node:crypto";
-import { Buffer } from "node:buffer";
+// ✅ Cloudflare Workers + Edge runtime compat:
+// Uses Web Crypto API (crypto.subtle) which is available in both Node.js 18+
+// and Cloudflare Workers. No node:crypto or node:buffer needed.
 import { z } from "zod";
 import { getStoredCookie } from "./cf-cookie-store";
 
@@ -41,7 +40,20 @@ const EPISODE_QUERY_HASH =
   "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 
 const AES_KEY_PASSPHRASE = "Xot36i3lK3:v1";
-const AES_KEY = createHash("sha256").update(AES_KEY_PASSPHRASE).digest();
+
+// ✅ Web Crypto API: pre-compute SHA-256 hash of the passphrase to get 32-byte AES key.
+// Lazy-initialized — only computed when first needed (avoids async at module scope).
+let _aesKeyBytes: Uint8Array | null = null;
+async function getAesKeyBytes(): Promise<Uint8Array> {
+  if (_aesKeyBytes) return _aesKeyBytes;
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(AES_KEY_PASSPHRASE));
+  _aesKeyBytes = new Uint8Array(hashBuffer);
+  return _aesKeyBytes;
+}
+
+// Pre-computed at module load (non-blocking)
+const AES_KEY_PROMISE = getAesKeyBytes();
 
 const REFERER = "https://youtu-chan.com";
 const ORIGIN = "https://youtu-chan.com";
@@ -222,22 +234,64 @@ export async function findShowByAniListId(
   return search.edges[0] ?? null;
 }
 
-function decryptTobeparsed(blobB64: string): unknown {
+// ✅ Web Crypto API: AES-256-CTR decryption using crypto.subtle
+// Replaces Node's createDecipheriv — works on both Node.js and Cloudflare Workers
+async function decryptTobeparsed(blobB64: string): Promise<unknown> {
   try {
-    const buf = Buffer.from(blobB64, "base64");
+    // Decode base64 to Uint8Array
+    const binaryStr = atob(blobB64);
+    const buf = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      buf[i] = binaryStr.charCodeAt(i);
+    }
     if (buf.length < 32) return null;
 
     const iv12 = buf.subarray(1, 13);
-    const counter = Buffer.concat([iv12, Buffer.from([0, 0, 0, 0x02])]);
+    // Counter = IV (12 bytes) + 0x00000002 (4 bytes, big-endian block counter at 2)
+    const counter = new Uint8Array(16);
+    counter.set(iv12, 0);
+    counter[12] = 0; counter[13] = 0; counter[14] = 0; counter[15] = 0x02;
     const ciphertext = buf.subarray(13, buf.length - 16);
 
-    const decipher = createDecipheriv("aes-256-ctr", AES_KEY, counter);
-    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    return JSON.parse(plaintext.toString("utf-8"));
+    // Get AES key (pre-computed SHA-256 of passphrase)
+    const keyBytes = await AES_KEY_PROMISE;
+
+    // Import key for Web Crypto AES-CTR
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      keyBytes as BufferSource,
+      { name: "AES-CTR" },
+      false,
+      ["decrypt"],
+    );
+
+    // Decrypt
+    const plaintextBuffer = await crypto.subtle.decrypt(
+      { name: "AES-CTR", counter: counter as BufferSource, length: 128 },
+      cryptoKey,
+      ciphertext as BufferSource,
+    );
+
+    const plaintext = new TextDecoder().decode(plaintextBuffer);
+    return JSON.parse(plaintext);
   } catch (err) {
     console.error("[AllAnime] decryptTobeparsed failed:", err);
     return null;
   }
+}
+
+// ✅ Web Crypto compat: replaces Buffer.from(hex, "hex") with Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+// ✅ Web Crypto compat: replaces Buffer.toString("utf-8")
+function bytesToString(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
 }
 
 export function decodeUrl(raw: string): string {
@@ -245,17 +299,18 @@ export function decodeUrl(raw: string): string {
   if (raw.startsWith("--")) {
     try {
       const hex = raw.slice(2);
-      const bytes = Buffer.from(hex, "hex");
-      const out = Buffer.allocUnsafe(bytes.length);
+      const bytes = hexToBytes(hex);
+      // XOR each byte with 56
+      const out = new Uint8Array(bytes.length);
       for (let i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ 56;
-      return out.toString("utf-8");
+      return bytesToString(out);
     } catch {
       return raw;
     }
   }
   if (raw.startsWith("ap/")) {
     try {
-      return Buffer.from(raw.slice(3), "hex").toString("utf-8");
+      return bytesToString(hexToBytes(raw.slice(3)));
     } catch {
       return raw;
     }
@@ -312,7 +367,7 @@ export async function getEpisodeSources(
     }
 
     if (json?.data?.tobeparsed) {
-      const decrypted = decryptTobeparsed(json.data.tobeparsed) as
+      const decrypted = (await decryptTobeparsed(json.data.tobeparsed)) as
         | { episode?: { sourceUrls?: SourceUrl[] } | null }
         | null;
       const sourceUrls = decrypted?.episode?.sourceUrls ?? [];

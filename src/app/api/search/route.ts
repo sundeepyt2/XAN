@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/search/route.ts
 import { NextResponse } from "next/server";
 import { fetchSearch } from "@/lib/anilist";

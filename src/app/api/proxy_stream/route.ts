@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/proxy_stream/route.ts
 import { NextResponse } from "next/server";
 

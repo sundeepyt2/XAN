@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/diagnostics/route.ts
 // Returns full diagnostic info about the stored cookie + server environment.
 

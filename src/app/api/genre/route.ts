@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/genre/route.ts
 import { NextResponse } from "next/server";
 import { fetchByGenre } from "@/lib/anilist";
