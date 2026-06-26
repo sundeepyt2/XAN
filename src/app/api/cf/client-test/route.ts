@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/client-test/route.ts
 // Returns the target URL that the browser should fetch directly to test
 // if its own cf_clearance cookie works client-side.

@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/clear/route.ts
 // Clears the stored cf_clearance cookie.
 

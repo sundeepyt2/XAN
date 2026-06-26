@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/(app)/trending/page.tsx
 // Server Component (async)
 

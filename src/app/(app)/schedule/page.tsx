@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/(app)/schedule/page.tsx
 import { fetchAiringSchedule } from "@/lib/anilist";
 import { ScheduleView } from "@/components/schedule/ScheduleView";

@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/save/route.ts
 // Saves the cf_clearance cookie value provided by the user.
 // Also captures the client's IP address for IP-mismatch diagnostics.

@@ -90,10 +90,11 @@ export const NAV_LINKS = [
   { label: "History", href: "/history" },
 ] as const;
 
+// ✅ Edge runtime compat: use btoa instead of Buffer.from().toString("base64")
 export const PLACEHOLDER_BLUR =
   "data:image/svg+xml;base64," +
-  Buffer.from(
+  btoa(
     `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='12'>
       <rect width='8' height='12' fill='#1a1a1a'/>
     </svg>`,
-  ).toString("base64");
+  );

@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/test/route.ts
 // Tests whether the stored cf_clearance cookie works against AllAnime.
 

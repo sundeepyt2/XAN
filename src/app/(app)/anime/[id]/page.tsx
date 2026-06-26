@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/(app)/anime/[id]/page.tsx
 // Server Component (async) — ✅ Bug #17: await params in Next.js 15+
 

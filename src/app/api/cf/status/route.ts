@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 // app/api/cf/status/route.ts
 // Returns whether a cf_clearance cookie is stored and valid.
 

@@ -3,20 +3,21 @@
 // Stores the full cookie string (not just cf_clearance) so multiple CF cookies
 // can be passed through. Also stores the user-agent and a client-side flag.
 //
-// ✅ Cloudflare Workers compat: fs/path not available on Workers.
+// ✅ Cloudflare Workers + Edge runtime compat:
+// fs/path not available on Workers or Edge runtime.
 // Since the new streaming pipeline doesn't need the CF cookie, these functions
-// return null/empty on Workers. The file-based storage only works in Node.js.
+// return null/empty on edge environments. The file-based storage only works in Node.js.
+//
+// ✅ Uses dynamic import of fs/path to avoid build errors on edge runtime.
 
-import { promises as fs } from "node:fs";
-import path from "node:path";
+// ✅ Detect if we're on Cloudflare Workers / Edge runtime (no fs support)
+const isEdgeRuntime =
+  typeof process !== "undefined" &&
+  (process.env?.CF_PAGES === "1" || process.env?.NEXT_RUNTIME === "edge");
 
-// ✅ Detect if we're on Cloudflare Workers (no fs support)
-const isCloudflareWorker =
-  typeof process !== "undefined" && process.env?.CF_PAGES === "1";
-
-const COOKIE_FILE = isCloudflareWorker
-  ? "" // No file system on Workers
-  : path.join(process.cwd(), ".cf-cookie.json");
+const COOKIE_FILE = isEdgeRuntime
+  ? "" // No file system on edge
+  : ""; // Will be set lazily in Node.js env
 
 export interface StoredCookie {
   // The full cookie header value, e.g. "cf_clearance=abc123; __cf_bm=xyz789"
@@ -32,9 +33,13 @@ let cached: StoredCookie | null = null;
 let cacheLoadedAt = 0;
 
 async function readFromDisk(): Promise<StoredCookie | null> {
-  if (isCloudflareWorker || !COOKIE_FILE) return null; // No fs on Workers
+  if (isEdgeRuntime) return null; // No fs on edge/Workers
   try {
-    const raw = await fs.readFile(COOKIE_FILE, "utf-8");
+    // ✅ Dynamic import so edge runtime doesn't try to bundle fs
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const cookieFile = path.join(process.cwd(), ".cf-cookie.json");
+    const raw = await fs.readFile(cookieFile, "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.value === "string" && parsed.value.length > 0) {
       return parsed as StoredCookie;
@@ -46,12 +51,15 @@ async function readFromDisk(): Promise<StoredCookie | null> {
 }
 
 async function writeToDisk(cookie: StoredCookie | null): Promise<void> {
-  if (isCloudflareWorker || !COOKIE_FILE) return; // No fs on Workers
+  if (isEdgeRuntime) return; // No fs on edge/Workers
   try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const cookieFile = path.join(process.cwd(), ".cf-cookie.json");
     if (cookie) {
-      await fs.writeFile(COOKIE_FILE, JSON.stringify(cookie, null, 2), "utf-8");
+      await fs.writeFile(cookieFile, JSON.stringify(cookie, null, 2), "utf-8");
     } else {
-      await fs.unlink(COOKIE_FILE).catch(() => {});
+      await fs.unlink(cookieFile).catch(() => {});
     }
   } catch (err) {
     console.error("[cf-cookie-store] Failed to write cookie file:", err);

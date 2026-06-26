@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // ✅ No `output: "standalone"` — Vercel handles deployment automatically.
-  // (The old `standalone` mode required manual `cp` commands in the build script
-  // which broke Vercel deployments.)
+  // ✅ Cloudflare Pages compat: standalone output is REQUIRED for Cloudflare
+  // deployment. Without it, the build produces a standard Next.js app that
+  // Cloudflare's @cloudflare/next-on-pages adapter can't bundle into a worker.
+  output: "standalone",
   images: {
     remotePatterns: [
       {
@@ -19,8 +20,6 @@ const nextConfig: NextConfig = {
     ],
   },
   // Don't ignore build errors — we want type safety.
-  // But we DO want to skip type-checking files outside src/ (skills/, scripts/, etc.)
-  // That's handled by tsconfig.json's `exclude` array.
   typescript: {
     ignoreBuildErrors: false,
   },
