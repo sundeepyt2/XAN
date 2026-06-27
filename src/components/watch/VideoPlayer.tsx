@@ -4,8 +4,9 @@
 // ✅ Controlled mode — parent (watch page) owns the mode state via localStorage.
 // ✅ Throttled progress reporting (max 1 write/5s) to avoid localStorage spam.
 // ✅ Retry button on error.
+// ✅ Uses the new YouTube-style custom player (YouTubeStylePlayer).
 import { useState, useEffect, useCallback, useRef } from "react";
-import { StreamPlayer } from "./StreamPlayer";
+import { YouTubeStylePlayer } from "./YouTubeStylePlayer";
 import { AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -159,7 +160,7 @@ export function VideoPlayer({
   }
 
   return (
-    <StreamPlayer
+    <YouTubeStylePlayer
       streamUrl={stream.url}
       streamType={stream.type}
       title={`${animeTitle} — Episode ${episode}`}

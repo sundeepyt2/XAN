@@ -142,6 +142,166 @@
   animation: gradient-shift 8s ease infinite;
 }
 
+/* ─── YouTube-Style Player Animations ─── */
+
+/* Seek ripple: when user presses J/L/arrows, show "+10s"/"-10s" that fades + scales out */
+@keyframes xan-seek-ripple {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+.animate-seek-ripple {
+  animation: xan-seek-ripple 0.7s ease-out forwards;
+}
+
+/* Mobile double-tap ripple (left/right half circle) */
+@keyframes xan-tap-ripple {
+  0% {
+    opacity: 0.7;
+    transform: scale(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.5);
+  }
+}
+.animate-tap-ripple {
+  animation: xan-tap-ripple 0.55s ease-out forwards;
+}
+
+/* Controls fade in/out (auto-hide) */
+.xan-controls {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.xan-controls--hidden {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+/* Big center play button entrance */
+@keyframes xan-play-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-play-pop {
+  animation: xan-play-pop 0.25s ease-out forwards;
+}
+
+/* Loading spinner (red, pulsing) */
+@keyframes xan-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-xan-spinner {
+  animation: xan-spinner 0.9s linear infinite;
+}
+
+/* Settings panel slide-up */
+@keyframes xan-panel-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-panel-up {
+  animation: xan-panel-up 0.18s ease-out forwards;
+}
+
+/* Custom seekbar — make native range thumb invisible, we render our own */
+.xan-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.xan-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-xan-crimson);
+  border: none;
+  margin-top: -6px;
+  box-shadow: 0 0 0 0 rgba(233, 69, 96, 0);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.xan-seek:hover::-webkit-slider-thumb,
+.xan-seek:focus::-webkit-slider-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 6px rgba(233, 69, 96, 0.18);
+}
+.xan-seek::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-xan-crimson);
+  border: none;
+  transition: transform 0.18s ease;
+}
+.xan-seek:hover::-moz-range-thumb {
+  transform: scale(1.25);
+}
+.xan-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+.xan-seek::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+/* Custom volume slider (smaller variant) */
+.xan-vol {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 14px;
+}
+.xan-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  margin-top: -3px;
+}
+.xan-vol::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+}
+
 /* ─── Skeleton Shimmer ─── */
 @keyframes shimmer {
   0% {
