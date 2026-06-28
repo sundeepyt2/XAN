@@ -1,7 +1,7 @@
 "use client";
 
 // app/(app)/watch/[id]/page.tsx
-import { use, useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { use, useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAnimeDetail } from "@/lib/anilist";
@@ -13,6 +13,7 @@ import {
   type AnimeDetail,
 } from "@/types/anime";
 import { VideoPlayer } from "@/components/watch/VideoPlayer";
+import { SourceSwitcher } from "@/components/watch/SourceSwitcher";
 import { EpisodePanel } from "@/components/watch/EpisodePanel";
 import { VerificationBadge } from "@/components/watch/VerificationBadge";
 import { AutoPlayOverlay } from "@/components/watch/AutoPlayOverlay";
@@ -22,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
+import { useSettings } from "@/hooks/useSettings";
 import { ArrowLeft, Star, Clock, Calendar, Tv, Info } from "lucide-react";
 
 interface PageProps {
@@ -61,9 +63,30 @@ function WatchPageInner({ params }: PageProps) {
   // ✅ Track whether dub was requested but fell back to sub for this episode
   const [fellBackToSub, setFellBackToSub] = useState(false);
 
+  // ✅ Source switcher state — tracks the available sources, current index,
+  // and which sources have failed. The SourceSwitcher panel renders below
+  // the player and lets users manually switch sources.
+  const [sources, setSources] = useState<
+    Array<{
+      url: string;
+      type: "hls" | "mp4" | "dash" | "iframe";
+      quality: string | null;
+      headers?: Record<string, string>;
+      sourceName?: string;
+      provider?: string;
+    }>
+  >([]);
+  const [currentSourceIdx, setCurrentSourceIdx] = useState(0);
+  const [failedSourceIdxs, setFailedSourceIdxs] = useState<Set<number>>(new Set());
+  // ✅ Ref to expose the manual source-switch function to the VideoPlayer
+  const selectSourceRef = useRef<((idx: number) => void) | null>(null);
+
   // ✅ Persistent sub/dub preference — stored in localStorage, survives across
   // episodes and sessions. Once you pick DUB, all future episodes use DUB.
   const [preferredMode, setPreferredMode] = usePreferredMode();
+
+  // ✅ Read user settings — controls whether the Sources panel is shown
+  const { settings } = useSettings();
 
   // URL ?type= overrides localStorage (for shareable links)
   const urlMode = searchParams.get("type") === "dub" ? "dub" : null;
@@ -306,6 +329,12 @@ function WatchPageInner({ params }: PageProps) {
               onProgress={handleProgress}
               mode={mode}
               onFallbackToSub={handleFallbackToSub}
+              onSourcesLoaded={(s) => setSources(s)}
+              onSourceChange={(idx, failed) => {
+                setCurrentSourceIdx(idx);
+                setFailedSourceIdxs(failed);
+              }}
+              selectSourceRef={selectSourceRef}
             />
             {showAutoPlay && nextEp && (
               <AutoPlayOverlay
@@ -316,6 +345,19 @@ function WatchPageInner({ params }: PageProps) {
               />
             )}
           </div>
+
+          {/* ✅ Source switcher panel — always visible below the player.
+              Shows all available sources with type badges + bandwidth-tier
+              preview. Click any source to switch (preserves playback position).
+              Can be disabled in Settings → Bandwidth → Show Sources panel. */}
+          {sources.length > 0 && settings.showSourceSwitcher && (
+            <SourceSwitcher
+              sources={sources}
+              currentSourceIdx={currentSourceIdx}
+              failedSourceIdxs={failedSourceIdxs}
+              onSelectSource={(idx) => selectSourceRef.current?.(idx)}
+            />
+          )}
 
           <VerificationBadge />
 

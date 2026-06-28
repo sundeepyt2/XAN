@@ -39,6 +39,7 @@ import {
   Shield,
   Activity,
   BarChart3,
+  ListVideo,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -457,6 +458,18 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+
+            {/* ✅ Sources panel visibility toggle */}
+            <SettingRow
+              icon={ListVideo}
+              title="Show Sources panel"
+              description="Display a clickable list of all available stream sources below the video player. Lets you manually switch sources (e.g. to find one that works through the CF Worker)."
+            >
+              <Switch
+                checked={settings.showSourceSwitcher}
+                onCheckedChange={(v) => update("showSourceSwitcher", v)}
+              />
+            </SettingRow>
 
             {/* ─── Bandwidth Analytics panel ─── */}
             <div className="pt-6 space-y-4">

@@ -81,11 +81,13 @@ export async function GET(
         for (const mode of modesToTry) {
           const result = await extractStreamUrl(show._id, String(episode), mode);
           if (result && result.sources.length > 0) {
-            const picked = result.sources[0];
+            // ✅ Cap at 8 sources to keep the UI manageable (xancld uses 6)
+            const cappedSources = result.sources.slice(0, 8);
+            const picked = cappedSources[0];
             if (picked) {
               return NextResponse.json({
                 stream: streamResultToJSON(picked),
-                sources: result.sources.map(streamResultToJSON),
+                sources: cappedSources.map(streamResultToJSON),
                 duration: null,
                 episodeTitle: `Episode ${episode}`,
                 thumbnail: null,

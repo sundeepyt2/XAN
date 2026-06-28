@@ -64,7 +64,7 @@ import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 
 interface YouTubeStylePlayerProps {
   streamUrl: string;
-  streamType: "hls" | "mp4" | "dash";
+  streamType: "hls" | "mp4" | "dash" | "iframe";
   title: string;
   posterUrl?: string;
   streamHeaders?: Record<string, string>;
@@ -82,7 +82,7 @@ interface YouTubeStylePlayerProps {
   provider?: string;
   /**
    * Bandwidth loading mode — overrides the default 3-tier cascade:
-   *   "auto"        — direct → manifest-proxy → full-proxy (default)
+   *   "auto"        — direct → manifest-proxy → cf-proxy → full-proxy (default)
    *   "direct-only" — direct only; will fail for Referer-enforced streams
    *   "proxy-only"  — full-proxy only; bypasses CDN entirely
    */
@@ -92,6 +92,8 @@ interface YouTubeStylePlayerProps {
    * Used by the analytics hook to track which providers land on which tier.
    */
   onTierResolved?: (tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => void;
+  /** Called after the stream loads (loadeddata event) — used by parent to clear pending-seek flags */
+  onLoadedCallback?: () => void;
 }
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -135,10 +137,16 @@ const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
  */
 function buildLoadCandidates(
   streamUrl: string,
-  streamType: "hls" | "mp4" | "dash",
+  streamType: "hls" | "mp4" | "dash" | "iframe",
   headers?: Record<string, string>,
   bandwidthMode: "auto" | "direct-only" | "proxy-only" = "auto",
 ): Array<{ mode: LoadMode; url: string }> {
+  // ✅ iframe sources: always direct — no headers needed, no proxy
+  // These are embed URLs (Ok.ru, Uni) that work without Referer
+  if (streamType === "iframe") {
+    return [{ mode: "direct", url: streamUrl }];
+  }
+
   const hasHeaders = headers && Object.keys(headers).length > 0;
 
   // No headers → browser can load directly, no proxy needed at all.
@@ -193,21 +201,32 @@ function buildLoadCandidates(
     candidates.push(fullProxyCandidate);
 
     // ✅ "direct-only" — drop everything except direct.
-    // Use case: user wants 0 Vercel bandwidth at the cost of some streams failing.
     if (bandwidthMode === "direct-only") {
       return candidates.slice(0, 1);
     }
     return candidates;
   }
 
-  // MP4 / DASH — no manifest to split, so: direct → cf-proxy → full-proxy
-  const candidates: Array<{ mode: LoadMode; url: string }> = [
-    { mode: "direct", url: streamUrl },
-  ];
-  if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+  // ✅ MP4 / DASH — reordered for speed:
+  // MP4s almost always need Referer (browsers can't set it). The "direct"
+  // tier was wasting ~1-2 seconds failing before falling back. New order:
+  //   1. CF-Proxy (if configured) — 0 Vercel BW, skip the wasted direct attempt
+  //   2. Full-proxy (fallback if CF Worker is down or provider blocks CF IPs)
+  //
+  // If CF_WORKER_URL is NOT set, fall back to the old order:
+  //   1. Direct (might work for signed-URL MP4s)
+  //   2. Full-proxy
+  const candidates: Array<{ mode: LoadMode; url: string }> = [];
+  if (cfProxyCandidate) {
+    candidates.push(cfProxyCandidate);
+  } else {
+    candidates.push({ mode: "direct", url: streamUrl });
+  }
   candidates.push(fullProxyCandidate);
+
   if (bandwidthMode === "direct-only") {
-    return candidates.slice(0, 1);
+    // For MP4 without CF Worker, direct-only means just direct
+    return cfProxyCandidate ? [] : [{ mode: "direct", url: streamUrl }];
   }
   return candidates;
 }
@@ -246,6 +265,7 @@ export function YouTubeStylePlayer({
   provider,
   bandwidthMode = "auto",
   onTierResolved,
+  onLoadedCallback,
 }: YouTubeStylePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -254,6 +274,7 @@ export function YouTubeStylePlayer({
   const onProgressRef = useRef(onProgress);
   const autoResumeTimeRef = useRef(autoResumeTime);
   const onTierResolvedRef = useRef(onTierResolved);
+  const onLoadedCallbackRef = useRef(onLoadedCallback);
   const endFiredRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<{ time: number; side: "left" | "right" }>({ time: 0, side: "left" });
@@ -301,6 +322,7 @@ export function YouTubeStylePlayer({
     onProgressRef.current = onProgress;
     autoResumeTimeRef.current = autoResumeTime;
     onTierResolvedRef.current = onTierResolved;
+    onLoadedCallbackRef.current = onLoadedCallback;
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -403,6 +425,8 @@ export function YouTubeStylePlayer({
             tierIdxRef.current = tierIdx;
             // ✅ Analytics: this tier succeeded
             fireTierResolved(candidate.mode);
+            // ✅ Notify parent that the stream has loaded (HLS path)
+            onLoadedCallbackRef.current?.();
           });
 
           hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
@@ -471,6 +495,9 @@ export function YouTubeStylePlayer({
         const currentTier = candidates[tierIdxRef.current]?.mode;
         if (currentTier) fireTierResolved(currentTier);
       }
+      // ✅ Notify parent that the stream has loaded — used to clear pending-seek
+      // flags after a manual source switch
+      onLoadedCallbackRef.current?.();
     };
     const onPlaying = () => {
       if (!cancelled) {

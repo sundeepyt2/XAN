@@ -42,6 +42,9 @@ export interface Settings {
    */
   bandwidthMode: "auto" | "direct-only" | "proxy-only";
 
+  /** Show the Sources panel below the video player (manual source switching) */
+  showSourceSwitcher: boolean;
+
   // ─── Content & Discovery ───
   /** Hide adult/Ecchi/Hentai content from browse & search */
   hideAdult: boolean;
@@ -65,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   skipOutro: false,
   defaultAudioMode: "sub",
   bandwidthMode: "auto",
+  showSourceSwitcher: true,
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",

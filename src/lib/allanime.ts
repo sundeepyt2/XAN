@@ -111,7 +111,13 @@ export interface SourceUrl {
 
 export interface StreamResult {
   url: string;
-  type: "hls" | "mp4";
+  /**
+   * "hls" — HLS .m3u8 stream (loaded via hls.js)
+   * "mp4" — direct MP4 file (loaded via <video src>)
+   * "iframe" — embed page (Ok.ru, Uni, etc.) loaded directly as <video src>;
+   *            these don't need Referer/Origin headers — they're public embeds
+   */
+  type: "hls" | "mp4" | "iframe";
   quality: string | null;
   sourceName: string;
   headers?: Record<string, string>;
@@ -536,13 +542,26 @@ export async function extractSource(
   }
 
   if (name.includes("ok") && url.includes("ok.ru")) {
+    // Ok.ru is an iframe embed URL — load directly, no Referer needed
     return [
       {
         url,
-        type: "mp4",
+        type: "iframe",
         quality: null,
         sourceName,
-        headers: { Referer: REFERER },
+      },
+    ];
+  }
+
+  // ✅ Uni / other iframe-style sources (allanime.uns.bio/#... embeds)
+  // These are iframe embeds — no headers needed, load directly
+  if (name.includes("uni") || (url.includes("uns.bio") && url.includes("#"))) {
+    return [
+      {
+        url,
+        type: "iframe",
+        quality: null,
+        sourceName,
       },
     ];
   }

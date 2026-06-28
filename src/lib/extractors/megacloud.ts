@@ -9,7 +9,7 @@ const MEGACLOUD_HEADERS: HeadersInit = {
 export interface ExtractedSource {
   url: string;
   quality: string | null;
-  type: "hls" | "mp4";
+  type: "hls" | "mp4" | "iframe";
 }
 
 export async function extractMegacloud(embedUrl: string): Promise<ExtractedSource[]> {

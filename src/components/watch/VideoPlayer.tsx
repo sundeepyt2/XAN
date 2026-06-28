@@ -10,6 +10,10 @@
 // ✅ Multi-source fallback: if all tiers fail for source[0], automatically
 //    try source[1], source[2], etc. Maximize chance of finding a source that
 //    works through the CF Worker (some providers block CF IPs, others don't).
+// ✅ Manual source switching: parent can call onSelectSource(idx) to switch
+//    sources — preserves playback position across the switch.
+// ✅ Failed-source tracking: a Set of failed source indices is exposed to the
+//    parent so the SourceSwitcher panel can show ❌ indicators.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { YouTubeStylePlayer } from "./YouTubeStylePlayer";
 import { AlertCircle, Loader2, RotateCcw, Shuffle } from "lucide-react";
@@ -30,11 +34,17 @@ interface VideoPlayerProps {
   mode: "sub" | "dub";
   /** Called when dub falls back to sub for this episode */
   onFallbackToSub?: () => void;
+  /** Called when the sources list is loaded — parent uses it to render SourceSwitcher */
+  onSourcesLoaded?: (sources: StreamData[]) => void;
+  /** Called when the active source index changes (manual or auto-fallback) */
+  onSourceChange?: (idx: number, failedIdxs: Set<number>) => void;
+  /** Parent can call this to manually switch sources (via ref) */
+  selectSourceRef?: React.MutableRefObject<((idx: number) => void) | null>;
 }
 
 interface StreamData {
   url: string;
-  type: "hls" | "mp4" | "dash";
+  type: "hls" | "mp4" | "dash" | "iframe";
   quality: string | null;
   headers?: Record<string, string>;
   sourceName?: string;
@@ -52,23 +62,38 @@ export function VideoPlayer({
   onProgress,
   mode,
   onFallbackToSub,
+  onSourcesLoaded,
+  onSourceChange,
+  selectSourceRef,
 }: VideoPlayerProps) {
   const [stream, setStream] = useState<StreamData | null>(null);
   // ✅ Full list of sources from the API — used for multi-source fallback
   const [allSources, setAllSources] = useState<StreamData[]>([]);
   // ✅ Which source index we're currently trying (advances on tier failure)
   const [sourceIdx, setSourceIdx] = useState(0);
+  // ✅ Set of source indices that have failed all tiers — shown as ❌ in UI
+  const [failedSources, setFailedSources] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // ✅ Retry nonce — incrementing forces the fetch effect to re-run
   const [retryNonce, setRetryNonce] = useState(0);
   // ✅ "Switching source" indicator (shown briefly while advancing to next source)
   const [switchingSource, setSwitchingSource] = useState(false);
+  // ✅ Preserved playback position — used when manually switching sources
+  // so the user doesn't lose their place in the episode.
+  // Stored as STATE (not a ref) because we read it during render to compute
+  // effectiveAutoResume, and reading refs during render is forbidden.
+  const [preservedPosition, setPreservedPosition] = useState<number | null>(null);
+  // ✅ Manual switch flag — when true, we'll seek to preservedPosition after
+  // the new source loads. Stored as STATE for the same reason.
+  const [pendingSeek, setPendingSeek] = useState(false);
+  // ✅ Ref mirrors of the above (for use inside callbacks where state would be stale)
+  const preservedPositionRef = useRef<number | null>(null);
+  const pendingSeekRef = useRef(false);
 
   // ✅ Read bandwidthMode from settings + analytics hook
   const { settings } = useSettings();
   const { logTierResult } = useBandwidthStats();
-  // Ref so the callback identity is stable (doesn't trigger stream refetch)
   const logTierResultRef = useRef(logTierResult);
   useEffect(() => {
     logTierResultRef.current = logTierResult;
@@ -84,6 +109,8 @@ export function VideoPlayer({
   const lastProgressWriteRef = useRef(0);
   const stableOnProgress = useCallback(
     (t: number, d: number) => {
+      // Always track current position in ref (for source switching preservation)
+      preservedPositionRef.current = t;
       const now = Date.now();
       if (now - lastProgressWriteRef.current < 5000 && t < d * 0.95) return;
       lastProgressWriteRef.current = now;
@@ -93,6 +120,44 @@ export function VideoPlayer({
   );
 
   const stableOnEpisodeEnd = useCallback(() => onEpisodeEnd?.(), [onEpisodeEnd]);
+
+  // ✅ Notify parent when sources load or source index changes
+  useEffect(() => {
+    onSourcesLoaded?.(allSources);
+  }, [allSources, onSourcesLoaded]);
+
+  useEffect(() => {
+    onSourceChange?.(sourceIdx, failedSources);
+  }, [sourceIdx, failedSources, onSourceChange]);
+
+  // ✅ Manual source selection — exposed to parent via selectSourceRef
+  const handleSelectSource = useCallback(
+    (idx: number) => {
+      if (idx < 0 || idx >= allSources.length) return;
+      if (idx === sourceIdx) return;
+      // ✅ Preserve current playback position so we can seek to it after switch
+      const video = document.querySelector("video");
+      if (video) {
+        const pos = video.currentTime;
+        preservedPositionRef.current = pos;
+        setPreservedPosition(pos);
+        pendingSeekRef.current = true;
+        setPendingSeek(true);
+      }
+      setSwitchingSource(true);
+      setSourceIdx(idx);
+      setStream(allSources[idx]);
+      setTimeout(() => setSwitchingSource(false), 600);
+    },
+    [allSources, sourceIdx],
+  );
+
+  // ✅ Expose handleSelectSource to parent via ref
+  useEffect(() => {
+    if (selectSourceRef) {
+      selectSourceRef.current = handleSelectSource;
+    }
+  }, [handleSelectSource, selectSourceRef]);
 
   // ✅ Stable analytics callback — fires when the player settles on a tier.
   // Also handles multi-source fallback: if all tiers fail for the current
@@ -108,6 +173,13 @@ export function VideoPlayer({
 
       // ✅ Multi-source fallback: if all tiers failed for this source, try the next one
       if (tier === "failed") {
+        // Mark this source as failed
+        setFailedSources((prev) => {
+          const next = new Set(prev);
+          next.add(sourceIdx);
+          return next;
+        });
+
         setSourceIdx((currentIdx) => {
           const nextIdx = currentIdx + 1;
           if (nextIdx < allSources.length) {
@@ -115,7 +187,15 @@ export function VideoPlayer({
               `[VideoPlayer] Source ${currentIdx} (${allSources[currentIdx]?.sourceName}) failed all tiers — trying source ${nextIdx} (${allSources[nextIdx]?.sourceName})`
             );
             setSwitchingSource(true);
-            // Small delay so the user sees the "switching" indicator
+            // Preserve position for auto-fallback too
+            const video = document.querySelector("video");
+            if (video) {
+              const pos = video.currentTime;
+              preservedPositionRef.current = pos;
+              setPreservedPosition(pos);
+              pendingSeekRef.current = true;
+              setPendingSeek(true);
+            }
             setTimeout(() => {
               setStream(allSources[nextIdx]);
               setSwitchingSource(false);
@@ -126,7 +206,7 @@ export function VideoPlayer({
         });
       }
     },
-    [stream, allSources],
+    [stream, allSources, sourceIdx],
   );
 
   useEffect(() => {
@@ -136,6 +216,11 @@ export function VideoPlayer({
     setStream(null);
     setAllSources([]);
     setSourceIdx(0);
+    setFailedSources(new Set());
+    preservedPositionRef.current = null;
+    setPreservedPosition(null);
+    pendingSeekRef.current = false;
+    setPendingSeek(false);
     lastProgressWriteRef.current = 0;
 
     const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
@@ -167,7 +252,6 @@ export function VideoPlayer({
             provider: json?.provider,
           };
           // ✅ Build the full sources list from the API response.
-          // The API returns {stream: ..., sources: [...]} — we use both.
           const sources: StreamData[] = [primaryStream];
           if (Array.isArray(json?.sources)) {
             for (const src of json.sources) {
@@ -206,11 +290,20 @@ export function VideoPlayer({
   }, [animeId, episode, animeTitle, mode, retryNonce]);
 
   if (error) {
+    // ✅ If we have failed sources, show the "Tried: ..." message (xancld.xyz style)
+    const failedNames = Array.from(failedSources)
+      .map((i) => allSources[i]?.sourceName ?? `Source ${i + 1}`)
+      .join(", ");
     return (
       <div className="w-full aspect-video bg-zinc-900 rounded-lg flex flex-col items-center justify-center text-center p-6 border border-xan-border">
         <AlertCircle className="h-10 w-10 text-xan-crimson mb-3" />
         <p className="text-foreground font-medium">Stream Unavailable</p>
         <p className="text-sm text-muted-foreground mt-1 max-w-md">{error}</p>
+        {failedNames && (
+          <p className="text-xs text-muted-foreground/70 mt-2 max-w-md">
+            Tried: {failedNames}
+          </p>
+        )}
         <Button
           onClick={() => setRetryNonce((n) => n + 1)}
           variant="secondary"
@@ -235,6 +328,13 @@ export function VideoPlayer({
     );
   }
 
+  // ✅ Compute autoResumeTime for this load:
+  //   - If we have a preserved position from a source switch, use that
+  //   - Else use the parent-provided autoResumeTime (from watch history)
+  const effectiveAutoResume = pendingSeek
+    ? preservedPosition ?? undefined
+    : autoResumeTime;
+
   return (
     <div className="relative">
       <YouTubeStylePlayer
@@ -245,7 +345,7 @@ export function VideoPlayer({
         posterUrl={posterUrl}
         streamHeaders={stream.headers}
         sourceName={stream.sourceName}
-        autoResumeTime={autoResumeTime}
+        autoResumeTime={effectiveAutoResume}
         skipIntroOffset={skipIntroOffset}
         onEpisodeEnd={stableOnEpisodeEnd}
         onProgress={stableOnProgress}
@@ -253,6 +353,13 @@ export function VideoPlayer({
         provider={stream.provider}
         bandwidthMode={settings.bandwidthMode}
         onTierResolved={stableOnTierResolved}
+        onLoadedCallback={() => {
+          // ✅ After the new source loads, clear the pending-seek flag
+          if (pendingSeekRef.current) {
+            pendingSeekRef.current = false;
+            setPendingSeek(false);
+          }
+        }}
       />
       {/* ✅ "Switching source" overlay — shown briefly while advancing to next source */}
       {switchingSource && (
@@ -264,12 +371,6 @@ export function VideoPlayer({
           <p className="text-white/60 text-xs mt-1">
             Source {sourceIdx + 1} of {allSources.length}
           </p>
-        </div>
-      )}
-      {/* ✅ Source indicator (bottom-left, subtle) — shows which source is active */}
-      {allSources.length > 1 && !switchingSource && (
-        <div className="absolute bottom-2 left-2 text-[10px] text-white/40 font-mono pointer-events-none z-10">
-          source {sourceIdx + 1}/{allSources.length}
         </div>
       )}
     </div>
