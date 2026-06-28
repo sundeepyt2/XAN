@@ -29,6 +29,19 @@ export interface Settings {
   /** Default audio mode: "sub" (Japanese + subtitles) or "dub" (English dubbed) */
   defaultAudioMode: "sub" | "dub";
 
+  // ─── Bandwidth ───
+  /**
+   * How the player should load video streams. Controls the 3-tier cascade:
+   *   "auto"        — try direct → manifest-proxy → full-proxy (recommended;
+   *                   minimizes Vercel bandwidth while keeping streams working)
+   *   "direct-only" — never proxy; browser loads raw URL from CDN only.
+   *                   0 Vercel bandwidth, but streams that enforce Referer
+   *                   (most MP4 sources) will fail to play.
+   *   "proxy-only"  — always proxy through Vercel. Use this if your ISP blocks
+   *                   the anime provider CDNs directly. Uses full bandwidth.
+   */
+  bandwidthMode: "auto" | "direct-only" | "proxy-only";
+
   // ─── Content & Discovery ───
   /** Hide adult/Ecchi/Hentai content from browse & search */
   hideAdult: boolean;
@@ -51,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   skipIntro: false,
   skipOutro: false,
   defaultAudioMode: "sub",
+  bandwidthMode: "auto",
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",

@@ -35,6 +35,10 @@ import {
   Check,
   AlertTriangle,
   ChevronRight,
+  Zap,
+  Shield,
+  Activity,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -67,6 +71,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useSettings, DEFAULT_SETTINGS, type Settings } from "@/hooks/useSettings";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
+import { useBandwidthStats, type TierResult } from "@/hooks/useBandwidthStats";
 
 // ─── Section definitions (for nav chips + rendering) ───────────────────────
 
@@ -74,6 +79,7 @@ type SectionId =
   | "appearance"
   | "playback"
   | "audio"
+  | "bandwidth"
   | "content"
   | "data"
   | "about";
@@ -82,6 +88,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Palette }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "playback", label: "Playback", icon: Play },
   { id: "audio", label: "Audio & Subtitles", icon: Languages },
+  { id: "bandwidth", label: "Bandwidth", icon: Zap },
   { id: "content", label: "Content & Discovery", icon: ShieldCheck },
   { id: "data", label: "Data & Privacy", icon: Database },
   { id: "about", label: "About", icon: Info },
@@ -102,9 +109,11 @@ export default function SettingsPage() {
   const { settings, update, reset, isLoaded } = useSettings();
   const { theme, setTheme } = useTheme();
   const { history, clearHistory } = useWatchHistory();
+  const { stats: tierStats, since: tierStatsSince, clearStats: clearTierStats } = useBandwidthStats();
   const [activeSection, setActiveSection] = useState<SectionId>("appearance");
   const [exported, setExported] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  const [clearStatsOpen, setClearStatsOpen] = useState(false);
 
   // Scroll spy: highlight nav chip for the section currently in view
   useEffect(() => {
@@ -378,6 +387,167 @@ export default function SettingsPage() {
                 ))}
               </div>
             </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Bandwidth ─── */}
+      <section id="bandwidth" className="scroll-mt-32">
+        <SectionHeader
+          icon={Zap}
+          title="Bandwidth"
+          description="Control how video streams are loaded to minimize server costs."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6 divide-y divide-xan-border/60">
+            <SettingRow
+              icon={settings.bandwidthMode === "proxy-only" ? Shield : Zap}
+              title="Stream loading strategy"
+              description="Choose how the player fetches video data. Direct modes save server bandwidth; proxy mode maximizes compatibility."
+            >
+              <div className="flex gap-1.5 bg-xan-card/60 p-1 rounded-lg border border-xan-border">
+                {(
+                  [
+                    { value: "auto", icon: Zap, label: "Auto" },
+                    { value: "direct-only", icon: Zap, label: "Direct only" },
+                    { value: "proxy-only", icon: Shield, label: "Proxy only" },
+                  ] as const
+                ).map(({ value, icon: Icon, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => update("bandwidthMode", value)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      settings.bandwidthMode === value
+                        ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+
+            {/* Mode explanation */}
+            <div className="pt-2 space-y-2">
+              {settings.bandwidthMode === "auto" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-emerald-400">Auto (recommended):</strong>{" "}
+                  Tries direct CDN fetch first (0 server bandwidth), then
+                  manifest-proxy (~5KB per episode), then full-proxy as a
+                  fallback. Best balance of compatibility and cost.
+                </p>
+              )}
+              {settings.bandwidthMode === "direct-only" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-emerald-400">Direct only:</strong>{" "}
+                  Browser loads the stream URL straight from the provider CDN.
+                  Zero server bandwidth, but streams that enforce Referer
+                  headers (most MP4 sources) will fail to play. Best for
+                  bandwidth-conscious users who only watch HLS streams.
+                </p>
+              )}
+              {settings.bandwidthMode === "proxy-only" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-amber-400">Proxy only:</strong>{" "}
+                  Always routes video through your Vercel server. Use this if
+                  your ISP blocks the anime provider CDNs directly. Consumes
+                  full server bandwidth — watch your Vercel quota.
+                </p>
+              )}
+            </div>
+
+            {/* ─── Bandwidth Analytics panel ─── */}
+            <div className="pt-6 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                    Stream tier analytics
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    See which providers and sources land on which bandwidth
+                    tier. Helps you identify bandwidth-friendly providers to
+                    prioritize. Stats are stored locally in your browser
+                    {tierStatsSince > 0 && (
+                      <>
+                        {" "}— tracked since{" "}
+                        <span className="font-mono">
+                          {new Date(tierStatsSince).toLocaleDateString()}
+                        </span>
+                      </>
+                    )}
+                    .
+                  </p>
+                </div>
+                <AlertDialog open={clearStatsOpen} onOpenChange={setClearStatsOpen}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={tierStats.length === 0}
+                      className="bg-xan-card border-xan-border hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 flex-shrink-0"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Clear
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="bg-xan-card border-xan-border">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2">
+                        <AlertTriangle className="h-5 w-5 text-amber-500" />
+                        Clear bandwidth analytics?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently delete all {tierStats.length}{" "}
+                        tier stat {tierStats.length === 1 ? "entry" : "entries"}.
+                        This action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="bg-xan-card border-xan-border">
+                        Cancel
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          clearTierStats();
+                          setClearStatsOpen(false);
+                        }}
+                        className="bg-red-500 hover:bg-red-600 text-white border-0"
+                      >
+                        Yes, clear stats
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+
+              {tierStats.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-xan-border bg-xan-card/20 p-6 text-center">
+                  <Activity className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    No analytics yet. Play an episode to start tracking which
+                    bandwidth tier each provider uses.
+                  </p>
+                </div>
+              ) : (
+                <BandwidthStatsTable stats={tierStats} />
+              )}
+
+              <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                <strong className="text-muted-foreground">How to read this:</strong>{" "}
+                <span className="text-emerald-400 font-medium">DIRECT</span> = 0
+                server bandwidth (best).{" "}
+                <span className="text-emerald-400/80 font-medium">DIRECT+</span> ={" "}
+                manifest-proxy, ~5KB per episode (excellent).{" "}
+                <span className="text-amber-400 font-medium">PROXIED</span> =
+                full-proxy fallback (uses server bandwidth).{" "}
+                <span className="text-red-400 font-medium">FAILED</span> = all
+                tiers failed. Providers with high PROXIED counts are
+                bandwidth-expensive — consider deprecating them.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </section>
@@ -743,6 +913,91 @@ function SettingRow({
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <div className="flex-shrink-0">{children}</div>
+    </div>
+  );
+}
+
+// ─── Bandwidth analytics table ─────────────────────────────────────────────
+
+interface TierStat {
+  provider: string;
+  sourceName: string;
+  streamType: string;
+  tier: TierResult;
+  count: number;
+  lastSeen: number;
+}
+
+function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
+  // Group by (provider, sourceName, streamType) and sum tiers
+  const grouped = useMemo(() => {
+    const map = new Map<string, { provider: string; sourceName: string; streamType: string; tiers: Record<TierResult, number>; total: number; lastSeen: number }>();
+    for (const s of stats) {
+      const key = `${s.provider}|${s.sourceName}|${s.streamType}`;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = {
+          provider: s.provider,
+          sourceName: s.sourceName,
+          streamType: s.streamType,
+          tiers: { "direct": 0, "manifest-proxy": 0, "full-proxy": 0, "failed": 0 },
+          total: 0,
+          lastSeen: 0,
+        };
+        map.set(key, entry);
+      }
+      entry.tiers[s.tier] += s.count;
+      entry.total += s.count;
+      entry.lastSeen = Math.max(entry.lastSeen, s.lastSeen);
+    }
+    // Sort by total count descending
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [stats]);
+
+  const grandTotal = grouped.reduce((sum, g) => sum + g.total, 0);
+
+  return (
+    <div className="rounded-lg border border-xan-border bg-xan-card/30 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-xan-border bg-xan-card/40">
+              <th className="text-left font-medium text-muted-foreground px-3 py-2">Provider</th>
+              <th className="text-left font-medium text-muted-foreground px-3 py-2">Source</th>
+              <th className="text-left font-medium text-muted-foreground px-3 py-2">Type</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">DIRECT</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">DIRECT+</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">PROXIED</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">FAILED</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grouped.map((g, i) => (
+              <tr key={i} className="border-b border-xan-border/40 last:border-0 hover:bg-xan-card/40 transition-colors">
+                <td className="px-3 py-2 font-mono text-foreground">{g.provider}</td>
+                <td className="px-3 py-2 text-muted-foreground">{g.sourceName}</td>
+                <td className="px-3 py-2">
+                  <span className="inline-block px-1.5 py-0.5 rounded bg-xan-card/60 border border-xan-border text-[10px] font-mono uppercase">
+                    {g.streamType}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-emerald-300">{g.tiers.direct || <span className="text-muted-foreground/30">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-emerald-300/80">{g.tiers["manifest-proxy"] || <span className="text-muted-foreground/30">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-amber-300">{g.tiers["full-proxy"] || <span className="text-muted-foreground/30">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-red-300">{g.tiers.failed || <span className="text-muted-foreground/30">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono font-semibold text-foreground">{g.total}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-xan-border bg-xan-card/40">
+              <td colSpan={7} className="px-3 py-2 text-right text-muted-foreground font-medium">Total plays tracked</td>
+              <td className="px-3 py-2 text-right font-mono font-bold text-foreground">{grandTotal}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   );
 }

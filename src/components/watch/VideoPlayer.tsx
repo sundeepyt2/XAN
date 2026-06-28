@@ -5,10 +5,14 @@
 // ✅ Throttled progress reporting (max 1 write/5s) to avoid localStorage spam.
 // ✅ Retry button on error.
 // ✅ Uses the new YouTube-style custom player (YouTubeStylePlayer).
+// ✅ Reads bandwidthMode from useSettings and threads it through to the player.
+// ✅ Reads/writes bandwidth-tier analytics via useBandwidthStats.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { YouTubeStylePlayer } from "./YouTubeStylePlayer";
 import { AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useSettings } from "@/hooks/useSettings";
+import { useBandwidthStats } from "@/hooks/useBandwidthStats";
 
 interface VideoPlayerProps {
   animeId: number;
@@ -52,6 +56,15 @@ export function VideoPlayer({
   // ✅ Retry nonce — incrementing forces the fetch effect to re-run
   const [retryNonce, setRetryNonce] = useState(0);
 
+  // ✅ Read bandwidthMode from settings + analytics hook
+  const { settings } = useSettings();
+  const { logTierResult } = useBandwidthStats();
+  // Ref so the callback identity is stable (doesn't trigger stream refetch)
+  const logTierResultRef = useRef(logTierResult);
+  useEffect(() => {
+    logTierResultRef.current = logTierResult;
+  });
+
   // ✅ Bug fix: use ref for onFallbackToSub to prevent unnecessary refetches.
   // Previously, onFallbackToSub was in the useEffect deps — if its identity
   // changed (e.g., parent re-render), the stream would refetch.
@@ -73,6 +86,21 @@ export function VideoPlayer({
   );
 
   const stableOnEpisodeEnd = useCallback(() => onEpisodeEnd?.(), [onEpisodeEnd]);
+
+  // ✅ Stable analytics callback — fires when the player settles on a tier.
+  // Uses refs so the callback identity never changes (avoids re-running the
+  // stream-loader effect in YouTubeStylePlayer).
+  const stableOnTierResolved = useCallback(
+    (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => {
+      logTierResultRef.current?.({
+        provider: stream?.provider ?? "unknown",
+        sourceName: stream?.sourceName ?? "unknown",
+        streamType: stream?.type ?? "unknown",
+        tier,
+      });
+    },
+    [stream],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -172,6 +200,9 @@ export function VideoPlayer({
       onEpisodeEnd={stableOnEpisodeEnd}
       onProgress={stableOnProgress}
       mode={mode}
+      provider={stream.provider}
+      bandwidthMode={settings.bandwidthMode}
+      onTierResolved={stableOnTierResolved}
     />
   );
 }

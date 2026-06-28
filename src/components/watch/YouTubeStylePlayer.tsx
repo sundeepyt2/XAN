@@ -74,6 +74,23 @@ interface YouTubeStylePlayerProps {
   onProgress?: (currentTime: number, duration: number) => void;
   /** Current sub/dub mode (read-only badge — toggle is external) */
   mode?: "sub" | "dub";
+  /**
+   * Provider name from the stream API (e.g. "allanime", "consumet/animepahe", "demo").
+   * Forwarded to the analytics callback so you can break down tier stats by provider.
+   */
+  provider?: string;
+  /**
+   * Bandwidth loading mode — overrides the default 3-tier cascade:
+   *   "auto"        — direct → manifest-proxy → full-proxy (default)
+   *   "direct-only" — direct only; will fail for Referer-enforced streams
+   *   "proxy-only"  — full-proxy only; bypasses CDN entirely
+   */
+  bandwidthMode?: "auto" | "direct-only" | "proxy-only";
+  /**
+   * Called when the player settles on a tier (success or all-failed).
+   * Used by the analytics hook to track which providers land on which tier.
+   */
+  onTierResolved?: (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => void;
 }
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -101,15 +118,20 @@ type LoadMode = "direct" | "manifest-proxy" | "full-proxy";
 /**
  * Compute the ordered list of (mode, effectiveUrl) candidates to try.
  * The first one that loads successfully wins; the rest are fallbacks.
+ *
+ * @param bandwidthMode "auto" = full cascade; "direct-only" = Tier 1 only;
+ *                      "proxy-only" = Tier 3 only (skip direct + manifest-proxy)
  */
 function buildLoadCandidates(
   streamUrl: string,
   streamType: "hls" | "mp4" | "dash",
   headers?: Record<string, string>,
+  bandwidthMode: "auto" | "direct-only" | "proxy-only" = "auto",
 ): Array<{ mode: LoadMode; url: string }> {
   const hasHeaders = headers && Object.keys(headers).length > 0;
 
   // No headers → browser can load directly, no proxy needed at all.
+  // (bandwidthMode doesn't matter here — direct always works.)
   if (!hasHeaders) {
     return [{ mode: "direct", url: streamUrl }];
   }
@@ -121,13 +143,24 @@ function buildLoadCandidates(
   }
   const headerParamStr = headerParams.toString();
 
+  // ✅ "proxy-only" — skip direct + manifest-proxy, go straight to full-proxy.
+  // Use case: user's ISP blocks the CDN, so direct/manifest-proxy always fail.
+  if (bandwidthMode === "proxy-only") {
+    return [
+      {
+        mode: "full-proxy",
+        url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
+      },
+    ];
+  }
+
   if (streamType === "hls") {
     // HLS gets the full 3-tier cascade:
     //   1. Direct (will fail if Referer enforced, but costs 0 bytes to try)
     //   2. Manifest-proxy (server fetches tiny .m3u8 with headers, rewrites
     //      segment URLs to absolute; segments then load direct from CDN)
     //   3. Full-proxy (fallback — proxies all segments through Vercel)
-    return [
+    const candidates: Array<{ mode: LoadMode; url: string }> = [
       { mode: "direct", url: streamUrl },
       {
         mode: "manifest-proxy",
@@ -138,16 +171,26 @@ function buildLoadCandidates(
         url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
       },
     ];
+    // ✅ "direct-only" — drop manifest-proxy and full-proxy fallbacks.
+    // Use case: user wants 0 Vercel bandwidth at the cost of some streams failing.
+    if (bandwidthMode === "direct-only") {
+      return candidates.slice(0, 1);
+    }
+    return candidates;
   }
 
   // MP4 / DASH — no manifest to split, so only direct + full-proxy
-  return [
+  const candidates: Array<{ mode: LoadMode; url: string }> = [
     { mode: "direct", url: streamUrl },
     {
       mode: "full-proxy",
       url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
     },
   ];
+  if (bandwidthMode === "direct-only") {
+    return candidates.slice(0, 1);
+  }
+  return candidates;
 }
 
 function formatTime(s: number): string {
@@ -181,6 +224,9 @@ export function YouTubeStylePlayer({
   onEpisodeEnd,
   onProgress,
   mode = "sub",
+  provider,
+  bandwidthMode = "auto",
+  onTierResolved,
 }: YouTubeStylePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -188,9 +234,13 @@ export function YouTubeStylePlayer({
   const onEpisodeEndRef = useRef(onEpisodeEnd);
   const onProgressRef = useRef(onProgress);
   const autoResumeTimeRef = useRef(autoResumeTime);
+  const onTierResolvedRef = useRef(onTierResolved);
   const endFiredRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<{ time: number; side: "left" | "right" }>({ time: 0, side: "left" });
+  // ✅ Track which tier we've already logged for this stream — prevents
+  // duplicate analytics events when the player retries within the same load.
+  const tierLoggedRef = useRef<string | null>(null);
 
   // Playback state
   const [loading, setLoading] = useState(true);
@@ -231,6 +281,7 @@ export function YouTubeStylePlayer({
     onEpisodeEndRef.current = onEpisodeEnd;
     onProgressRef.current = onProgress;
     autoResumeTimeRef.current = autoResumeTime;
+    onTierResolvedRef.current = onTierResolved;
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -241,8 +292,10 @@ export function YouTubeStylePlayer({
     if (!video) return;
 
     // Build the candidate list for this stream (captured in closure)
-    const candidates = buildLoadCandidates(streamUrl, streamType, streamHeaders);
+    const candidates = buildLoadCandidates(streamUrl, streamType, streamHeaders, bandwidthMode);
     tierIdxRef.current = 0;
+    // Reset the "already logged" guard for this load cycle
+    tierLoggedRef.current = null;
 
     setLoading(true);
     setError(null);
@@ -258,6 +311,15 @@ export function YouTubeStylePlayer({
 
     let cancelled = false;
 
+    // ✅ Helper: fire onTierResolved exactly once per load cycle.
+    // Called when a tier succeeds (manifest parsed / canplay) or when all fail.
+    const fireTierResolved = (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => {
+      if (cancelled) return;
+      if (tierLoggedRef.current === tier) return; // dedupe
+      tierLoggedRef.current = tier;
+      onTierResolvedRef.current?.(tier);
+    };
+
     // ── Helper: try to load a specific tier's URL ──
     const tryLoadTier = (tierIdx: number) => {
       if (cancelled) return;
@@ -266,6 +328,8 @@ export function YouTubeStylePlayer({
         // Exhausted all tiers — show error
         setError("Failed to load stream after trying all bandwidth tiers. The source may be unavailable.");
         setLoading(false);
+        // ✅ Analytics: all tiers failed
+        fireTierResolved("failed");
         return;
       }
 
@@ -318,6 +382,8 @@ export function YouTubeStylePlayer({
             // ✅ Manifest loaded successfully — current tier works.
             // Reset tier index so a future error starts from this tier.
             tierIdxRef.current = tierIdx;
+            // ✅ Analytics: this tier succeeded
+            fireTierResolved(candidate.mode);
           });
 
           hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
@@ -341,19 +407,27 @@ export function YouTubeStylePlayer({
               } else {
                 setError(`Playback error: ${data.details}`);
                 setLoading(false);
+                // ✅ Analytics: all tiers failed
+                fireTierResolved("failed");
               }
             }
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           // Safari native HLS
           video.src = effectiveUrl;
+          // ✅ Analytics: assuming native HLS succeeds (Safari handles CORS internally)
+          fireTierResolved(candidate.mode);
         } else {
           setError("HLS is not supported in this browser.");
           setLoading(false);
+          fireTierResolved("failed");
         }
       } else {
         // MP4 / DASH — direct <video src>
         video.src = effectiveUrl;
+        // ✅ Analytics for MP4 is fired in onLoaded (loadeddata event) to
+        // confirm the URL actually started playing. If it errors, onError
+        // advances to the next tier or fires "failed".
       }
     };
 
@@ -371,6 +445,12 @@ export function YouTubeStylePlayer({
             /* ignore */
           }
         }
+      }
+      // ✅ Analytics: for MP4/DASH, loadeddata means the current tier actually
+      // works (not just that the URL was set). Fire success here.
+      if (streamType !== "hls") {
+        const currentTier = candidates[tierIdxRef.current]?.mode;
+        if (currentTier) fireTierResolved(currentTier);
       }
     };
     const onPlaying = () => {
@@ -423,6 +503,8 @@ export function YouTubeStylePlayer({
       } else {
         setError("Failed to load stream. The source may be unavailable.");
         setLoading(false);
+        // ✅ Analytics: all tiers failed
+        fireTierResolved("failed");
       }
     };
     const onVolumeChange = () => {
@@ -476,7 +558,7 @@ export function YouTubeStylePlayer({
         hlsRef.current = null;
       }
     };
-  }, [streamUrl, streamType, streamHeaders]);
+  }, [streamUrl, streamType, streamHeaders, bandwidthMode]);
 
   // ──────────────────────────────────────────────────────────────
   // Fullscreen listener
