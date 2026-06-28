@@ -1,29 +1,5 @@
-// cf-worker/worker.js
-//
 // XAN External Stream Proxy — Cloudflare Worker
-//
-// ✅ Runs on Cloudflare Workers FREE tier (100k req/day, unlimited bandwidth)
-// ✅ Replaces Vercel's /api/proxy_stream for Referer-enforced streams
-// ✅ Sets Referer/Origin headers on the upstream fetch (browsers can't)
-// ✅ Streams the response body back (no body size limit)
-// ✅ Supports HTTP Range requests (essential for video seeking)
-// ✅ Host allowlist — only proxies known anime provider CDNs
-// ✅ CORS headers — browser can fetch cross-origin
-//
-// Deploy:
-//   1. npm install -g wrangler
-//   2. wrangler login   (opens browser for OAuth)
-//   3. cd cf-worker && wrangler deploy
-//   4. Copy the resulting URL (https://xan-stream-proxy.<subdomain>.workers.dev)
-//   5. Set NEXT_PUBLIC_CF_WORKER_URL in your Vercel project env vars
-//   6. Redeploy Vercel
-//
-// URL format (called by the player):
-//   https://xan-stream-proxy.<subdomain>.workers.dev/?url=<encoded_stream_url>&h_Referer=<...>&h_Origin=<...>
-//
-// The h_ prefix is stripped and the rest becomes a request header on the
-// upstream fetch. This lets the Worker set forbidden headers like Referer
-// that browsers cannot set themselves.
+// Re-paste this ENTIRE file into the Cloudflare editor, replacing everything.
 
 const ALLOWED_HOSTS = [
   "tools.fast4speed.rsvp",
@@ -39,15 +15,18 @@ const ALLOWED_HOSTS = [
   "repackager.wixmp.com",
   "allanimenews.com",
   "sharepoint.com",
+  "fast4speed.rsvp",
+  "wixmp.com",
 ];
 
 function isAllowedHost(urlStr) {
   try {
     const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
     return ALLOWED_HOSTS.some(
-      (h) => u.hostname === h || u.hostname.endsWith(`.${h}`),
+      (h) => host === h || host.endsWith("." + h)
     );
-  } catch {
+  } catch (e) {
     return false;
   }
 }
@@ -67,12 +46,13 @@ const FORWARD_REQUEST_HEADERS = ["range", "if-range", "if-modified-since"];
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "range",
-  "access-control-expose-headers": "content-length, content-range, content-type",
+  "access-control-expose-headers":
+    "content-length, content-range, content-type",
 };
 
-function jsonError(message, status = 400) {
+function jsonError(message, status) {
   return new Response(JSON.stringify({ error: message }), {
-    status,
+    status: status || 400,
     headers: {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
@@ -84,32 +64,35 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
 
-    // ─── CORS preflight ───
+    // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
         headers: {
-          ...CORS_HEADERS,
+          "access-control-allow-origin": "*",
           "access-control-allow-methods": "GET, OPTIONS",
-          "access-control-allow-headers": "range, content-type, if-range, if-modified-since",
+          "access-control-allow-headers":
+            "range, content-type, if-range, if-modified-since",
           "access-control-max-age": "86400",
         },
       });
     }
 
     if (request.method !== "GET") {
-      return jsonError("Method not allowed — use GET", 405);
+      return jsonError("Method not allowed - use GET", 405);
     }
 
-    // ─── Health check (hit the root with no ?url= param) ───
+    // Health check
     const target = url.searchParams.get("url");
     if (!target) {
       return new Response(
         JSON.stringify({
           ok: true,
           service: "xan-stream-proxy",
-          version: 1,
-          message: "Cloudflare Worker proxy for XAN. Pass ?url=<stream_url> to proxy a request.",
+          version: 2,
+          allowedHosts: ALLOWED_HOSTS.length,
+          message:
+            "Cloudflare Worker proxy for XAN. Pass ?url=<stream_url> to proxy a request.",
         }),
         {
           status: 200,
@@ -117,20 +100,28 @@ export default {
             "content-type": "application/json",
             "access-control-allow-origin": "*",
           },
-        },
+        }
       );
     }
 
-    // ─── Host allowlist ───
+    // Host allowlist
     if (!isAllowedHost(target)) {
-      return jsonError("Host not allowed by proxy allowlist", 403);
+      return jsonError(
+        "Host not allowed: " + (function () {
+          try {
+            return new URL(target).hostname;
+          } catch (e) {
+            return "invalid-url";
+          }
+        })(),
+        403
+      );
     }
 
-    // ─── Build upstream request headers ───
-    // Custom headers come in as h_Referer, h_Origin, etc.
+    // Build upstream headers (h_Referer, h_Origin, etc. -> Referer, Origin)
     const customHeaders = {};
-    url.searchParams.forEach((v, k) => {
-      if (k.startsWith("h_")) {
+    url.searchParams.forEach(function (v, k) {
+      if (k.indexOf("h_") === 0) {
         customHeaders[k.slice(2)] = v;
       }
     });
@@ -139,49 +130,51 @@ export default {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
       Accept: "*/*",
-      ...customHeaders,
     };
+    Object.keys(customHeaders).forEach(function (k) {
+      upstreamHeaders[k] = customHeaders[k];
+    });
 
-    // Forward Range / conditional-fetch headers from the client (for seeking)
-    for (const h of FORWARD_REQUEST_HEADERS) {
+    // Forward Range / conditional-fetch headers
+    for (let i = 0; i < FORWARD_REQUEST_HEADERS.length; i++) {
+      const h = FORWARD_REQUEST_HEADERS[i];
       const v = request.headers.get(h);
       if (v) upstreamHeaders[h] = v;
     }
 
-    // ─── Fetch upstream ───
+    // Fetch upstream
     try {
       const upstream = await fetch(target, {
         headers: upstreamHeaders,
         redirect: "follow",
       });
 
-      // ─── Build response headers ───
+      // Build response headers
       const respHeaders = new Headers(CORS_HEADERS);
-      for (const h of FORWARD_RESPONSE_HEADERS) {
+      for (let i = 0; i < FORWARD_RESPONSE_HEADERS.length; i++) {
+        const h = FORWARD_RESPONSE_HEADERS[i];
         const v = upstream.headers.get(h);
         if (v) respHeaders.set(h, v);
       }
 
-      // Fix content-type for MP4 streams that come back as octet-stream
-      const contentType = upstream.headers.get("content-type") ?? "";
+      // Fix content-type for MP4 streams
+      const contentType = upstream.headers.get("content-type") || "";
       const urlLower = target.toLowerCase();
       if (
-        (contentType.includes("octet-stream") || !contentType) &&
-        (urlLower.includes(".mp4") || urlLower.includes("/media"))
+        (contentType.indexOf("octet-stream") >= 0 || !contentType) &&
+        (urlLower.indexOf(".mp4") >= 0 || urlLower.indexOf("/media") >= 0)
       ) {
         respHeaders.set("content-type", "video/mp4");
       }
 
-      // ─── Stream the response body back to the browser ───
-      // Workers support streaming — upstream.body is a ReadableStream that
-      // gets piped through without buffering the whole video in memory.
+      // Stream the response body back
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
         headers: respHeaders,
       });
     } catch (err) {
-      const msg = err && err.message ? err.message : "Unknown proxy error";
+      const msg = (err && err.message) || "Unknown proxy error";
       return jsonError(msg, 502);
     }
   },
