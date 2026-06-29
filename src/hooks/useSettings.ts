@@ -31,16 +31,19 @@ export interface Settings {
 
   // ─── Bandwidth ───
   /**
-   * How the player should load video streams. Controls the 3-tier cascade:
-   *   "auto"        — try direct → manifest-proxy → full-proxy (recommended;
-   *                   minimizes Vercel bandwidth while keeping streams working)
-   *   "direct-only" — never proxy; browser loads raw URL from CDN only.
-   *                   0 Vercel bandwidth, but streams that enforce Referer
-   *                   (most MP4 sources) will fail to play.
-   *   "proxy-only"  — always proxy through Vercel. Use this if your ISP blocks
-   *                   the anime provider CDNs directly. Uses full bandwidth.
+   * How the player should load video streams. Controls the tier cascade:
+   *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (default)
+   *   "direct-only"     — direct only; no proxy (fails for Referer-enforced streams)
+   *   "cf-only"         — CF Worker only; 0 Vercel BW but requires NEXT_PUBLIC_CF_WORKER_URL
+   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no full-proxy fallback
+   *   "proxy-only"      — full-proxy only (Vercel); for users whose ISP blocks CDNs
    */
-  bandwidthMode: "auto" | "direct-only" | "proxy-only";
+  bandwidthMode:
+    | "auto"
+    | "direct-only"
+    | "cf-only"
+    | "direct-cf-only"
+    | "proxy-only";
 
   /** Show the Sources panel below the video player (manual source switching) */
   showSourceSwitcher: boolean;

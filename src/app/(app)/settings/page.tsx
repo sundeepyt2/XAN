@@ -406,28 +406,23 @@ export default function SettingsPage() {
               title="Stream loading strategy"
               description="Choose how the player fetches video data. Direct modes save server bandwidth; proxy mode maximizes compatibility."
             >
-              <div className="flex gap-1.5 bg-xan-card/60 p-1 rounded-lg border border-xan-border">
-                {(
-                  [
-                    { value: "auto", icon: Zap, label: "Auto" },
-                    { value: "direct-only", icon: Zap, label: "Direct only" },
-                    { value: "proxy-only", icon: Shield, label: "Proxy only" },
-                  ] as const
-                ).map(({ value, icon: Icon, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => update("bandwidthMode", value)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      settings.bandwidthMode === value
-                        ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Select
+                value={settings.bandwidthMode}
+                onValueChange={(v) =>
+                  update("bandwidthMode", v as Settings["bandwidthMode"])
+                }
+              >
+                <SelectTrigger className="w-44 bg-xan-card border-xan-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (recommended)</SelectItem>
+                  <SelectItem value="direct-only">Direct only</SelectItem>
+                  <SelectItem value="cf-only">CF Worker only</SelectItem>
+                  <SelectItem value="direct-cf-only">Direct + CF only</SelectItem>
+                  <SelectItem value="proxy-only">Proxy only (Vercel)</SelectItem>
+                </SelectContent>
+              </Select>
             </SettingRow>
 
             {/* Mode explanation */}
@@ -436,8 +431,9 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   <strong className="text-emerald-400">Auto (recommended):</strong>{" "}
                   Tries direct CDN fetch first (0 server bandwidth), then
-                  manifest-proxy (~5KB per episode), then full-proxy as a
-                  fallback. Best balance of compatibility and cost.
+                  manifest-proxy (~5KB per episode for HLS), then the
+                  Cloudflare Worker (0 Vercel BW), then full-proxy as a
+                  last-resort fallback. Best balance of compatibility and cost.
                 </p>
               )}
               {settings.bandwidthMode === "direct-only" && (
@@ -449,12 +445,33 @@ export default function SettingsPage() {
                   bandwidth-conscious users who only watch HLS streams.
                 </p>
               )}
+              {settings.bandwidthMode === "cf-only" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-cyan-400">CF Worker only:</strong>{" "}
+                  Routes all streams through the Cloudflare Worker (0 Vercel
+                  bandwidth). Requires <code className="font-mono">NEXT_PUBLIC_CF_WORKER_URL</code>{" "}
+                  to be set. Streams will fail if the Worker is down, the
+                  provider blocks Cloudflare IPs, or the env var is missing.
+                  No fallback — strict 0-Vercel-BW mode.
+                </p>
+              )}
+              {settings.bandwidthMode === "direct-cf-only" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-emerald-400">Direct + CF only:</strong>{" "}
+                  Tries direct CDN fetch first, then the Cloudflare Worker.
+                  Zero Vercel bandwidth in all cases. No manifest-proxy and no
+                  full-proxy fallback — if both direct and CF fail, playback
+                  fails. Best for users who want 0 Vercel BW but still want
+                  playback to work for signed-URL streams (which don't need CF).
+                </p>
+              )}
               {settings.bandwidthMode === "proxy-only" && (
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  <strong className="text-amber-400">Proxy only:</strong>{" "}
+                  <strong className="text-amber-400">Proxy only (Vercel):</strong>{" "}
                   Always routes video through your Vercel server. Use this if
-                  your ISP blocks the anime provider CDNs directly. Consumes
-                  full server bandwidth — watch your Vercel quota.
+                  your ISP blocks the anime provider CDNs directly AND the
+                  Cloudflare Worker. Consumes full server bandwidth — watch
+                  your Vercel quota.
                 </p>
               )}
             </div>

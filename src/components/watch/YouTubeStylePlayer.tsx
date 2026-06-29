@@ -81,12 +81,19 @@ interface YouTubeStylePlayerProps {
    */
   provider?: string;
   /**
-   * Bandwidth loading mode — overrides the default 3-tier cascade:
-   *   "auto"        — direct → manifest-proxy → cf-proxy → full-proxy (default)
-   *   "direct-only" — direct only; will fail for Referer-enforced streams
-   *   "proxy-only"  — full-proxy only; bypasses CDN entirely
+   * Bandwidth loading mode — controls the tier cascade:
+   *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (default)
+   *   "direct-only"     — direct only; no proxy
+   *   "cf-only"         — CF Worker only; 0 Vercel BW (requires NEXT_PUBLIC_CF_WORKER_URL)
+   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no full-proxy fallback
+   *   "proxy-only"      — full-proxy only (Vercel); for ISP-blocked CDNs
    */
-  bandwidthMode?: "auto" | "direct-only" | "proxy-only";
+  bandwidthMode?:
+    | "auto"
+    | "direct-only"
+    | "cf-only"
+    | "direct-cf-only"
+    | "proxy-only";
   /**
    * Called when the player settles on a tier (success or all-failed).
    * Used by the analytics hook to track which providers land on which tier.
@@ -132,14 +139,23 @@ const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
  * Compute the ordered list of (mode, effectiveUrl) candidates to try.
  * The first one that loads successfully wins; the rest are fallbacks.
  *
- * @param bandwidthMode "auto" = full cascade; "direct-only" = Tier 1 only;
- *                      "proxy-only" = Tier 3 only (skip direct + manifest-proxy)
+ * @param bandwidthMode controls the cascade:
+ *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy
+ *   "direct-only"     — direct only
+ *   "cf-only"         — cf-proxy only (requires NEXT_PUBLIC_CF_WORKER_URL)
+ *   "direct-cf-only"  — direct → cf-proxy (0 Vercel BW, no full-proxy fallback)
+ *   "proxy-only"      — full-proxy only (Vercel)
  */
 function buildLoadCandidates(
   streamUrl: string,
   streamType: "hls" | "mp4" | "dash" | "iframe",
   headers?: Record<string, string>,
-  bandwidthMode: "auto" | "direct-only" | "proxy-only" = "auto",
+  bandwidthMode:
+    | "auto"
+    | "direct-only"
+    | "cf-only"
+    | "direct-cf-only"
+    | "proxy-only" = "auto",
 ): Array<{ mode: LoadMode; url: string }> {
   // ✅ iframe sources: always direct — no headers needed, no proxy
   // These are embed URLs (Ok.ru, Uni) that work without Referer
@@ -163,71 +179,75 @@ function buildLoadCandidates(
   const headerParamStr = headerParams.toString();
   const encodedStreamUrl = encodeURIComponent(streamUrl);
 
-  // ✅ CF Worker URL builder (only used when CF_WORKER_URL is configured)
+  // ✅ Pre-build all possible candidates
+  const directCandidate = { mode: "direct" as const, url: streamUrl };
+  const manifestProxyCandidate = {
+    mode: "manifest-proxy" as const,
+    url: `/api/manifest-proxy?url=${encodedStreamUrl}&${headerParamStr}`,
+  };
   const cfProxyCandidate = CF_WORKER_URL
     ? {
         mode: "cf-proxy" as const,
         url: `${CF_WORKER_URL}/?url=${encodedStreamUrl}&${headerParamStr}`,
       }
     : null;
-
   const fullProxyCandidate = {
     mode: "full-proxy" as const,
     url: `/api/proxy_stream?url=${encodedStreamUrl}&${headerParamStr}`,
   };
 
-  // ✅ "proxy-only" — skip direct + manifest-proxy + cf-proxy, go straight
-  // to full-proxy. Use case: user's ISP blocks the CDN AND the CF Worker.
+  // ─── Mode: "proxy-only" — full-proxy only (Vercel) ───
+  // Use case: user's ISP blocks the CDN AND the CF Worker.
   if (bandwidthMode === "proxy-only") {
     return [fullProxyCandidate];
   }
 
-  if (streamType === "hls") {
-    // HLS gets the full cascade:
-    //   1. Direct (will fail if Referer enforced, but costs 0 bytes to try)
-    //   2. Manifest-proxy (server fetches tiny .m3u8 with headers, rewrites
-    //      segment URLs to absolute; segments then load direct from CDN)
-    //   3. CF-Proxy (Cloudflare Worker fetches everything with Referer;
-    //      0 Vercel BW — only inserted if NEXT_PUBLIC_CF_WORKER_URL is set)
-    //   4. Full-proxy (last-resort fallback — proxies all through Vercel)
-    const candidates: Array<{ mode: LoadMode; url: string }> = [
-      { mode: "direct", url: streamUrl },
-      {
-        mode: "manifest-proxy",
-        url: `/api/manifest-proxy?url=${encodedStreamUrl}&${headerParamStr}`,
-      },
-    ];
-    if (cfProxyCandidate) candidates.push(cfProxyCandidate);
-    candidates.push(fullProxyCandidate);
+  // ─── Mode: "cf-only" — CF Worker only; 0 Vercel BW ───
+  // Use case: user wants 0 Vercel BW and only trusts the CF Worker.
+  // If CF_WORKER_URL is not set, returns empty → player will fail
+  // (intentional — user explicitly chose cf-only).
+  if (bandwidthMode === "cf-only") {
+    return cfProxyCandidate ? [cfProxyCandidate] : [];
+  }
 
-    // ✅ "direct-only" — drop everything except direct.
-    if (bandwidthMode === "direct-only") {
-      return candidates.slice(0, 1);
-    }
+  // ─── Mode: "direct-cf-only" — direct → cf-proxy; 0 Vercel BW ───
+  // Use case: user wants 0 Vercel BW but allows direct as a first attempt
+  // (for streams with signed URLs that don't need Referer). No full-proxy
+  // fallback — if both fail, playback fails (intentional).
+  if (bandwidthMode === "direct-cf-only") {
+    const candidates: Array<{ mode: LoadMode; url: string }> = [directCandidate];
+    if (cfProxyCandidate) candidates.push(cfProxyCandidate);
     return candidates;
   }
 
-  // ✅ MP4 / DASH — reordered for speed:
-  // MP4s almost always need Referer (browsers can't set it). The "direct"
-  // tier was wasting ~1-2 seconds failing before falling back. New order:
-  //   1. CF-Proxy (if configured) — 0 Vercel BW, skip the wasted direct attempt
-  //   2. Full-proxy (fallback if CF Worker is down or provider blocks CF IPs)
-  //
-  // If CF_WORKER_URL is NOT set, fall back to the old order:
-  //   1. Direct (might work for signed-URL MP4s)
-  //   2. Full-proxy
+  // ─── Mode: "direct-only" — direct only; no proxy ───
+  // Use case: user wants 0 Vercel BW and doesn't want to rely on CF Worker.
+  // Fails for Referer-enforced streams (most MP4 sources).
+  if (bandwidthMode === "direct-only") {
+    return [directCandidate];
+  }
+
+  // ─── Mode: "auto" (default) — full cascade ───
+  if (streamType === "hls") {
+    // HLS: direct → manifest-proxy → cf-proxy → full-proxy
+    const candidates: Array<{ mode: LoadMode; url: string }> = [
+      directCandidate,
+      manifestProxyCandidate,
+    ];
+    if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+    candidates.push(fullProxyCandidate);
+    return candidates;
+  }
+
+  // MP4 / DASH: cf-proxy → full-proxy (skip wasted direct attempt when CF is set)
+  // Falls back to direct → full-proxy when CF_WORKER_URL is not set.
   const candidates: Array<{ mode: LoadMode; url: string }> = [];
   if (cfProxyCandidate) {
     candidates.push(cfProxyCandidate);
   } else {
-    candidates.push({ mode: "direct", url: streamUrl });
+    candidates.push(directCandidate);
   }
   candidates.push(fullProxyCandidate);
-
-  if (bandwidthMode === "direct-only") {
-    // For MP4 without CF Worker, direct-only means just direct
-    return cfProxyCandidate ? [] : [{ mode: "direct", url: streamUrl }];
-  }
   return candidates;
 }
 
