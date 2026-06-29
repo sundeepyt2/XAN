@@ -163,9 +163,16 @@ export function VideoPlayer({
     }
   }, [handleSelectSource, selectSourceRef]);
 
+  // ✅ Ref mirror of failedSources — needed inside stableOnTierResolved to
+  // check which sources have already failed (the state is stale in closures)
+  const failedSourcesRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    failedSourcesRef.current = failedSources;
+  }, [failedSources]);
+
   // ✅ Stable analytics callback — fires when the player settles on a tier.
   // Also handles multi-source fallback: if all tiers fail for the current
-  // source AND there are more sources available, advance to the next source.
+  // source, find the next non-failed source (cycling through ALL indices).
   const stableOnTierResolved = useCallback(
     (tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => {
       logTierResultRef.current?.({
@@ -175,39 +182,49 @@ export function VideoPlayer({
         tier,
       });
 
-      // ✅ Multi-source fallback: if all tiers failed for this source, try the next one
+      // ✅ Multi-source fallback: if all tiers failed for this source, find
+      // the next non-failed source. Cycles through ALL sources (not just
+      // forward) so sources before the current index get tried too.
       if (tier === "failed") {
         // Mark this source as failed
         setFailedSources((prev) => {
           const next = new Set(prev);
           next.add(sourceIdx);
+          failedSourcesRef.current = next; // update ref immediately
           return next;
         });
 
-        setSourceIdx((currentIdx) => {
-          const nextIdx = currentIdx + 1;
-          if (nextIdx < allSources.length) {
-            console.warn(
-              `[VideoPlayer] Source ${currentIdx} (${allSources[currentIdx]?.sourceName}) failed all tiers — trying source ${nextIdx} (${allSources[nextIdx]?.sourceName})`
-            );
-            setSwitchingSource(true);
-            // Preserve position for auto-fallback too
-            const video = document.querySelector("video");
-            if (video) {
-              const pos = video.currentTime;
-              preservedPositionRef.current = pos;
-              setPreservedPosition(pos);
-              pendingSeekRef.current = true;
-              setPendingSeek(true);
-            }
-            setTimeout(() => {
-              setStream(allSources[nextIdx]);
-              setSwitchingSource(false);
-            }, 600);
-            return nextIdx;
+        // Find the next non-failed source (cycle through all indices)
+        const failedSet = failedSourcesRef.current;
+        let nextIdx = -1;
+        for (let i = 1; i <= allSources.length; i++) {
+          const candidateIdx = (sourceIdx + i) % allSources.length;
+          if (!failedSet.has(candidateIdx)) {
+            nextIdx = candidateIdx;
+            break;
           }
-          return currentIdx;
-        });
+        }
+
+        if (nextIdx >= 0 && nextIdx !== sourceIdx) {
+          console.warn(
+            `[VideoPlayer] Source ${sourceIdx} (${allSources[sourceIdx]?.sourceName}) failed all tiers — trying source ${nextIdx} (${allSources[nextIdx]?.sourceName})`
+          );
+          setSwitchingSource(true);
+          // Preserve position for auto-fallback
+          const video = document.querySelector("video");
+          if (video) {
+            const pos = video.currentTime;
+            preservedPositionRef.current = pos;
+            setPreservedPosition(pos);
+            pendingSeekRef.current = true;
+            setPendingSeek(true);
+          }
+          setSourceIdx(nextIdx);
+          setTimeout(() => {
+            setStream(allSources[nextIdx]);
+            setSwitchingSource(false);
+          }, 600);
+        }
       }
     },
     [stream, allSources, sourceIdx],

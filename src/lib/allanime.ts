@@ -566,6 +566,19 @@ export async function extractSource(
     ];
   }
 
+  // ✅ StreamWish (Sw) — also an iframe embed page (streamwish.to/e/<id>)
+  // Returns HTML loading shell, not direct video. Needs JS to render player.
+  if (name.includes("sw") || url.includes("streamwish.to")) {
+    return [
+      {
+        url,
+        type: "iframe",
+        quality: null,
+        sourceName,
+      },
+    ];
+  }
+
   if (url.startsWith("http")) {
     const isHls = url.includes(".m3u8");
     return [

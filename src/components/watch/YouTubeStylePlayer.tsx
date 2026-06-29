@@ -1138,6 +1138,12 @@ export function YouTubeStylePlayer({
   // Trade-off: we lose our custom YouTube-style player UI for these sources,
   // but they work reliably (no Referer/Origin issues, no proxy needed).
   // Bandwidth: 0 Vercel bytes — the iframe loads directly from the provider.
+  //
+  // ⚠️ NO sandbox attribute — Uni's player detects sandboxed iframes and shows
+  // "Opss! Sandboxed our player is not allowed". The sandbox attribute's mere
+  // presence triggers the detection (even with allow-same-origin). Removing it
+  // is safe because we only embed known provider URLs (Ok.ru, Uni) via the
+  // host allowlist in the stream API.
   if (streamType === "iframe") {
     return (
       <div
@@ -1147,10 +1153,9 @@ export function YouTubeStylePlayer({
         <iframe
           src={streamUrl}
           className="w-full h-full"
-          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope; web-share"
           allowFullScreen
-          referrerPolicy="no-referrer"
-          sandbox="allow-scripts allow-same-origin allow-presentation allow-forms allow-popups"
+          referrerPolicy="origin"
           title={title}
           onLoad={() => {
             setLoading(false);
