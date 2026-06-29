@@ -14,7 +14,7 @@
 //    sources — preserves playback position across the switch.
 // ✅ Failed-source tracking: a Set of failed source indices is exposed to the
 //    parent so the SourceSwitcher panel can show ❌ indicators.
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { YouTubeStylePlayer } from "./YouTubeStylePlayer";
 import { AlertCircle, Loader2, RotateCcw, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -71,9 +71,22 @@ export function VideoPlayer({
   onSourceChange,
   selectSourceRef,
 }: VideoPlayerProps) {
+  // ✅ Read settings FIRST — needed by useMemo for disabledSources filtering
+  const { settings } = useSettings();
+  const { logTierResult } = useBandwidthStats();
+
   const [stream, setStream] = useState<StreamData | null>(null);
   // ✅ Full list of sources from the API — used for multi-source fallback
-  const [allSources, setAllSources] = useState<StreamData[]>([]);
+  // This is the UNFILTERED list (disabled sources are still here).
+  // The filtered list is derived via useMemo below.
+  const [allSourcesRaw, setAllSourcesRaw] = useState<StreamData[]>([]);
+  // ✅ Derived filtered list — disabled sources removed.
+  // Recomputes whenever the raw list or disabledSources changes.
+  const allSources = useMemo(() => {
+    const disabled = settings.disabledSources;
+    if (disabled.length === 0) return allSourcesRaw;
+    return allSourcesRaw.filter((s) => !disabled.includes(s.sourceName ?? ""));
+  }, [allSourcesRaw, settings.disabledSources]);
   // ✅ Which source index we're currently trying (advances on tier failure)
   const [sourceIdx, setSourceIdx] = useState(0);
   // ✅ Set of source indices that have failed all tiers — shown as ❌ in UI
@@ -96,9 +109,7 @@ export function VideoPlayer({
   const preservedPositionRef = useRef<number | null>(null);
   const pendingSeekRef = useRef(false);
 
-  // ✅ Read bandwidthMode from settings + analytics hook
-  const { settings } = useSettings();
-  const { logTierResult } = useBandwidthStats();
+  // ✅ Refs for stable callbacks (avoid re-running fetch effect on settings change)
   const logTierResultRef = useRef(logTierResult);
   useEffect(() => {
     logTierResultRef.current = logTierResult;
@@ -137,7 +148,19 @@ export function VideoPlayer({
     onSourceChange?.(sourceIdx, failedSources);
   }, [sourceIdx, failedSources, onSourceChange]);
 
+  // ✅ If the current source gets disabled (user toggled it off in Settings),
+  // auto-switch to the first enabled source.
+  useEffect(() => {
+    if (allSources.length === 0) return;
+    // If sourceIdx is out of bounds (e.g. after filtering), reset to 0
+    if (sourceIdx >= allSources.length) {
+      setSourceIdx(0);
+      if (allSources[0]) setStream(allSources[0]);
+    }
+  }, [allSources, sourceIdx]);
+
   // ✅ Manual source selection — exposed to parent via selectSourceRef
+  // idx is an index into the FILTERED allSources list (what SourceSwitcher renders)
   const handleSelectSource = useCallback(
     (idx: number) => {
       if (idx < 0 || idx >= allSources.length) return;
@@ -238,7 +261,7 @@ export function VideoPlayer({
     setLoading(true);
     setError(null);
     setStream(null);
-    setAllSources([]);
+    setAllSourcesRaw([]);
     setSourceIdx(0);
     setFailedSources(new Set());
     preservedPositionRef.current = null;
@@ -292,36 +315,36 @@ export function VideoPlayer({
               }
             }
           }
-          // ✅ Filter out disabled sources (user toggled them off in Settings)
-          const disabled = settings.disabledSources;
-          const enabledSources = disabled.length > 0
-            ? sources.filter((s) => !disabled.includes(s.sourceName ?? ""))
-            : sources;
-
-          if (enabledSources.length === 0) {
-            setError("All sources are disabled. Enable some sources in Settings → Bandwidth → Source filters.");
-            setLoading(false);
-            return;
-          }
-
-          // ✅ Sort sources by provider priority (from settings) + bandwidth score.
-          // Higher-priority providers come first; within each provider, the most
-          // bandwidth-friendly source comes first.
+          // ✅ Sort ALL sources by provider priority (from settings) + bandwidth score.
+          // Don't filter disabled sources here — the useMemo (allSources) handles that.
+          // allSourcesRaw holds the full list so re-enabling a source works without re-fetch.
           const priority = settings.providerPriority;
-          const sortedSources = [...enabledSources].sort((a, b) => {
+          const sortedSources = [...sources].sort((a, b) => {
             const aPriority = priority.indexOf(a.provider ?? "allanime");
             const bPriority = priority.indexOf(b.provider ?? "allanime");
             const aIdx = aPriority === -1 ? 999 : aPriority;
             const bIdx = bPriority === -1 ? 999 : bPriority;
             if (aIdx !== bIdx) return aIdx - bIdx;
-            // Same provider — sort by bandwidth score (higher = better)
             return scoreSource(b as SourceItem) - scoreSource(a as SourceItem);
           });
 
-          setAllSources(sortedSources);
-          // ✅ After sorting, the first source is the best (highest-priority provider + best bandwidth).
-          // Auto-pick it.
-          setStream(sortedSources[0] ?? primaryStream);
+          setAllSourcesRaw(sortedSources);
+
+          // ✅ The filtered list (allSources) is derived by useMemo. Auto-pick the first one.
+          // We compute it inline here to avoid a race condition with useMemo.
+          const disabled = settings.disabledSources;
+          const enabled = disabled.length > 0
+            ? sortedSources.filter((s) => !disabled.includes(s.sourceName ?? ""))
+            : sortedSources;
+
+          if (enabled.length === 0) {
+            setError("All sources are disabled. Enable some sources in Settings → Bandwidth → Source filters.");
+            setLoading(false);
+            return;
+          }
+
+          setSourceIdx(0);
+          setStream(enabled[0] ?? primaryStream);
           setLoading(false);
           if (json?.fallbackMode) {
             onFallbackToSubRef.current?.();
