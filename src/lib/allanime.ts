@@ -284,21 +284,50 @@ export async function getEpisodeSources(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "User-Agent": USER_AGENT,
-        Referer: REFERER,
-        Origin: ORIGIN,
-      },
-      next: { revalidate: 600 },
-    });
+  // ✅ CF Worker URL — used as fallback when direct episode query fails
+  const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
 
-    if (!res.ok) {
-      console.warn(`[AllAnime] episode query HTTP ${res.status}`);
+  async function tryEpisodeFetch(fetchUrl: string): Promise<Response | null> {
+    try {
+      const res = await fetch(fetchUrl, {
+        method: "GET",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+          Referer: REFERER,
+          Origin: ORIGIN,
+        },
+        next: { revalidate: 600 },
+      });
+      return res;
+    } catch (err) {
+      console.warn(`[AllAnime] episode query fetch failed:`, err);
+      return null;
+    }
+  }
+
+  try {
+    // ─── Step 1: Try direct fetch ───
+    let res = await tryEpisodeFetch(url);
+
+    // ─── Step 2: If direct fetch failed, retry through CF Worker ───
+    if (!res || !res.ok) {
+      if (CF_WORKER_URL) {
+        console.warn(`[AllAnime] episode query direct failed (HTTP ${res?.status ?? 'null'}), retrying through CF Worker...`);
+        const encodedUrl = encodeURIComponent(url);
+        const headerParams = new URLSearchParams();
+        headerParams.set("h_Referer", REFERER);
+        headerParams.set("h_Origin", ORIGIN);
+        const cfUrl = `${CF_WORKER_URL}/?url=${encodedUrl}&${headerParams.toString()}`;
+        res = await tryEpisodeFetch(cfUrl);
+      } else {
+        console.warn(`[AllAnime] episode query failed (HTTP ${res?.status ?? 'null'}) and no CF Worker configured`);
+      }
+    }
+
+    if (!res || !res.ok) {
+      console.warn(`[AllAnime] episode query HTTP ${res?.status ?? 'null'}`);
       return null;
     }
 
@@ -344,25 +373,38 @@ async function fetchClockJson(path: string): Promise<StreamResult[]> {
     ? fullPath
     : `${ALLANIME_BASE}${fullPath}`;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CLOCK_TIMEOUT_MS);
+  // ✅ CF Worker URL — used as fallback when direct fetch fails (500/403).
+  // AllAnime's clock.json endpoint sometimes blocks server-side IPs.
+  // The CF Worker uses Cloudflare's IPs which are less likely to be blocked.
+  const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
 
-  try {
-    const res = await fetch(fullUrl, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": USER_AGENT,
-        Referer: REFERER,
-        Accept: "application/json, */*",
-      },
-    });
-
-    if (!res.ok) {
-      console.warn(`[AllAnime] clock.json HTTP ${res.status} for ${fullUrl}`);
-      return [];
+  async function tryFetch(url: string): Promise<{ ok: boolean; text: string; status: number }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CLOCK_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": USER_AGENT,
+          Referer: REFERER,
+          Accept: "application/json, */*",
+        },
+      });
+      const text = await res.text();
+      return { ok: res.ok, text, status: res.status };
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        console.warn(`[AllAnime] clock.json timed out for ${url}`);
+      } else {
+        console.warn(`[AllAnime] clock.json fetch failed for ${url}:`, err);
+      }
+      return { ok: false, text: "", status: 0 };
+    } finally {
+      clearTimeout(timeout);
     }
+  }
 
-    const text = await res.text();
+  function parseClockResponse(text: string): StreamResult[] {
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -403,16 +445,37 @@ async function fetchClockJson(path: string): Promise<StreamResult[]> {
       }
     }
     return out;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      console.warn(`[AllAnime] clock.json timed out for ${fullUrl}`);
-    } else {
-      console.warn("[AllAnime] clock.json fetch failed:", err);
-    }
-    return [];
-  } finally {
-    clearTimeout(timeout);
   }
+
+  // ─── Step 1: Try direct fetch ───
+  const directResult = await tryFetch(fullUrl);
+  if (directResult.ok && directResult.text) {
+    const parsed = parseClockResponse(directResult.text);
+    if (parsed.length > 0) return parsed;
+  }
+
+  // ─── Step 2: If direct fetch failed (500/403/empty), retry through CF Worker ───
+  if (CF_WORKER_URL) {
+    console.warn(`[AllAnime] clock.json direct fetch failed (HTTP ${directResult.status}), retrying through CF Worker...`);
+    const encodedUrl = encodeURIComponent(fullUrl);
+    const headerParams = new URLSearchParams();
+    headerParams.set("h_Referer", REFERER);
+    headerParams.set("h_Origin", ORIGIN);
+    const cfUrl = `${CF_WORKER_URL}/?url=${encodedUrl}&${headerParams.toString()}`;
+    const cfResult = await tryFetch(cfUrl);
+    if (cfResult.ok && cfResult.text) {
+      const parsed = parseClockResponse(cfResult.text);
+      if (parsed.length > 0) {
+        console.log(`[AllAnime] clock.json succeeded through CF Worker (${parsed.length} sources)`);
+        return parsed;
+      }
+    }
+    console.warn(`[AllAnime] clock.json CF Worker fetch also failed (HTTP ${cfResult.status})`);
+  } else {
+    console.warn(`[AllAnime] clock.json direct fetch failed (HTTP ${directResult.status}) and no CF Worker configured`);
+  }
+
+  return [];
 }
 
 async function scrapeEmbedPage(
