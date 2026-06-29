@@ -22,9 +22,16 @@ import { SubDubToggle, usePreferredMode } from "@/components/watch/SubDubToggle"
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
 import { useSettings } from "@/hooks/useSettings";
-import { ArrowLeft, Star, Clock, Calendar, Tv, Info } from "lucide-react";
+import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -83,12 +90,51 @@ function WatchPageInner({ params }: PageProps) {
   // ✅ Ref to expose the manual source-switch function to the VideoPlayer
   const selectSourceRef = useRef<((idx: number) => void) | null>(null);
 
+  // ✅ Read user settings — controls provider priority, source switcher, etc.
+  const { settings } = useSettings();
+
+  // ✅ Compute available providers from the sources list (for the provider dropdown)
+  const availableProviders = useMemo(() => {
+    const providers = new Map<string, number>(); // providerId → first source index
+    sources.forEach((s, idx) => {
+      const pid = s.provider ?? "allanime";
+      if (!providers.has(pid)) providers.set(pid, idx);
+    });
+    // Sort by user's provider priority
+    const priority = settings.providerPriority;
+    return Array.from(providers.entries())
+      .map(([id, firstIdx]) => ({
+        id,
+        firstIdx,
+        label: id === "allanime" ? "AllAnime"
+          : id === "zen" ? "Zen"
+          : id === "koto" ? "Koto"
+          : id === "pahe" ? "AnimePahe"
+          : id.charAt(0).toUpperCase() + id.slice(1),
+        priority: priority.indexOf(id) === -1 ? 999 : priority.indexOf(id),
+      }))
+      .sort((a, b) => a.priority - b.priority);
+  }, [sources, settings.providerPriority]);
+
+  // ✅ Current provider (from the active source index)
+  const currentProvider = useMemo(() => {
+    if (currentSourceIdx >= 0 && sources[currentSourceIdx]) {
+      return sources[currentSourceIdx].provider ?? "allanime";
+    }
+    return "";
+  }, [currentSourceIdx, sources]);
+
+  // ✅ Handler: switch to a provider's first available source
+  const handleProviderSwitch = useCallback((providerId: string) => {
+    const provider = availableProviders.find((p) => p.id === providerId);
+    if (provider) {
+      selectSourceRef.current?.(provider.firstIdx);
+    }
+  }, [availableProviders]);
+
   // ✅ Persistent sub/dub preference — stored in localStorage, survives across
   // episodes and sessions. Once you pick DUB, all future episodes use DUB.
   const [preferredMode, setPreferredMode] = usePreferredMode();
-
-  // ✅ Read user settings — controls whether the Sources panel is shown
-  const { settings } = useSettings();
 
   // URL ?type= overrides localStorage (for shareable links)
   const urlMode = searchParams.get("type") === "dub" ? "dub" : null;
@@ -308,7 +354,7 @@ function WatchPageInner({ params }: PageProps) {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-4 min-w-0">
-          {/* ✅ External SUB/DUB toggle — lives above the player, persists in localStorage */}
+          {/* ✅ External SUB/DUB toggle + Provider switcher — lives above the player */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <SubDubToggle
               mode={mode}
@@ -317,6 +363,32 @@ function WatchPageInner({ params }: PageProps) {
               checkingDub={checkingDub}
               fellBackToSub={fellBackToSub}
             />
+
+            {/* ✅ Provider switcher dropdown — quick switch between AllAnime/Zen/Koto/AnimePahe */}
+            {availableProviders.length > 0 && (
+              <div className="flex items-center gap-2">
+                <MonitorPlay className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Provider:</span>
+                <Select
+                  value={currentProvider}
+                  onValueChange={handleProviderSwitch}
+                >
+                  <SelectTrigger className="w-36 bg-xan-card border-xan-border text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableProviders.map((p, idx) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        <span className="flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground font-mono">{idx + 1}</span>
+                          {p.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           <div className="relative">
