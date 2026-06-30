@@ -1507,18 +1507,16 @@ export function YouTubeStylePlayer({
 
           {/* Right cluster */}
           <div className="flex items-center gap-1.5">
-            {/* ✅ Skip Intro — permanent button alongside Loop (visible during intro window) */}
-            {showSkipIntro && (
-              <button
-                onClick={skipIntro}
-                className="p-1.5 rounded bg-xan-crimson/20 hover:bg-xan-crimson/40 text-xan-crimson transition-colors flex items-center gap-1"
-                aria-label="Skip intro"
-                title={`Skip intro (${skipIntroOffset}s)`}
-              >
-                <SkipForward className="h-4 w-4" />
-                <span className="text-[10px] font-bold hidden sm:inline">SKIP</span>
-              </button>
-            )}
+            {/* ✅ Skip button — permanent, double-forward icon, white like others */}
+            <button
+              onClick={skipIntro}
+              className="p-1.5 rounded hover:bg-white/15 transition-colors text-white"
+              aria-label="Skip forward"
+              title={`Skip forward (${skipIntroOffset}s)`}
+            >
+              <SkipForward className="h-5 w-5" />
+              <SkipForward className="h-5 w-5 -ml-2.5" />
+            </button>
 
             {/* Loop toggle */}
             <button
