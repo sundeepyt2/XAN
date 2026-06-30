@@ -17,7 +17,7 @@
 //       • Hover tooltip with timestamp (mouse-tracked)
 //       • Skip-intro marker (white notch at skipIntroOffset)
 //       • Larger thumb on hover (with red glow)
-//   - Settings panel menu (gear → multi-level: Speed / Quality / Loop)
+//   - Settings panel menu (gear → multi-level: Speed / Quality)
 //   - HLS quality selector (Auto + every level from hls.levels)
 //   - Volume slider that expands on hover (YouTube-style)
 //   - Time display toggle (click to switch current/duration ↔ current/-remaining)
@@ -48,14 +48,12 @@ import {
   Volume1,
   PictureInPicture2,
   Keyboard,
-  SkipForward,
   Settings,
   Check,
   ChevronRight,
   ChevronLeft,
   RotateCw,
   RotateCcw,
-  Repeat,
   Zap,
   Shield,
   Cloud,
@@ -342,7 +340,6 @@ export function YouTubeStylePlayer({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPip, setIsPip] = useState(false);
-  const [loop, setLoop] = useState(false);
 
   // UI state
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -973,13 +970,6 @@ export function YouTubeStylePlayer({
           e.preventDefault();
           togglePip();
           break;
-        case "r":
-        case "R":
-          e.preventDefault();
-          setLoop((v) => !v);
-          showControls();
-          scheduleHide();
-          break;
         case "t":
         case "T":
           e.preventDefault();
@@ -1020,12 +1010,6 @@ export function YouTubeStylePlayer({
     showControls,
     scheduleHide,
   ]);
-
-  // Apply loop attribute to the video element when toggled
-  useEffect(() => {
-    const video = videoRef.current;
-    if (video) video.loop = loop;
-  }, [loop]);
 
   // ──────────────────────────────────────────────────────────────
   // Seekbar interaction (hover preview + click-to-seek + drag scrub)
@@ -1507,25 +1491,15 @@ export function YouTubeStylePlayer({
 
           {/* Right cluster */}
           <div className="flex items-center gap-1.5">
-            {/* ✅ Skip button — permanent, double-forward icon, white like others */}
+            {/* ✅ Skip button — >> style (double chevron), permanent, white */}
             <button
               onClick={skipIntro}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors text-white"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors text-white flex items-center"
               aria-label="Skip forward"
               title={`Skip forward (${skipIntroOffset}s)`}
             >
-              <SkipForward className="h-5 w-5" />
-              <SkipForward className="h-5 w-5 -ml-2.5" />
-            </button>
-
-            {/* Loop toggle */}
-            <button
-              onClick={() => setLoop((v) => !v)}
-              className={`p-1.5 rounded hover:bg-white/15 transition-colors ${loop ? "text-xan-crimson" : "text-white"}`}
-              aria-label="Toggle loop"
-              title={loop ? "Loop on (R)" : "Loop off (R)"}
-            >
-              <Repeat className="h-4 w-4" />
+              <ChevronRight className="h-5 w-5" />
+              <ChevronRight className="h-5 w-5 -ml-3" />
             </button>
 
             {/* Settings (gear) → multi-level panel */}
@@ -1573,16 +1547,6 @@ export function YouTubeStylePlayer({
                           </span>
                         </button>
                       )}
-                      <button
-                        onClick={() => setLoop((v) => !v)}
-                        className="flex items-center justify-between w-full px-4 py-2.5 hover:bg-white/10 transition-colors border-t border-white/5"
-                      >
-                        <span>Loop</span>
-                        <span className={`flex items-center gap-1.5 ${loop ? "text-xan-crimson" : "text-white/70"}`}>
-                          {loop ? "On" : "Off"}
-                          <Repeat className="h-3.5 w-3.5" />
-                        </span>
-                      </button>
                     </>
                   )}
 
