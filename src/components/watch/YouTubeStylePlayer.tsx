@@ -1399,6 +1399,8 @@ export function YouTubeStylePlayer({
 
       {/* ── Big center play button (when paused) ── */}
       {/* ✅ Bug fix: pointer-events-none on overlay, pointer-events-auto on button */}
+      {/* ✅ Mobile: compact (w-11 h-11, h-5 icon) so it doesn't dominate the
+          small screen. Desktop (sm+): original size (w-20 h-20, h-9 icon). */}
       {!playing && !loading && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <button
@@ -1406,8 +1408,8 @@ export function YouTubeStylePlayer({
             className="pointer-events-auto"
             aria-label="Play"
           >
-            <div className="w-20 h-20 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl transition-transform hover:scale-105 animate-play-pop">
-              <Play className="h-9 w-9 text-white fill-white ml-1" />
+            <div className="w-11 h-11 sm:w-20 sm:h-20 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl transition-transform hover:scale-105 animate-play-pop">
+              <Play className="h-5 w-5 sm:h-9 sm:w-9 text-white fill-white ml-0.5 sm:ml-1" />
             </div>
           </button>
         </div>
@@ -1615,31 +1617,31 @@ export function YouTubeStylePlayer({
       {showSettings && (
         <div
           data-settings-panel
-          className="absolute bottom-0 left-0 right-0 max-h-[50vh] sm:bottom-full sm:left-auto sm:right-3 sm:mb-2 sm:w-64 sm:max-h-[60vh] z-50 rounded-t-xl sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
+          className="absolute bottom-0 left-0 right-0 max-h-[36vh] text-[12px] sm:bottom-full sm:left-auto sm:right-3 sm:mb-2 sm:w-64 sm:max-h-[60vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
           {/* Mobile drag handle (visual affordance — not draggable, but signals "bottom sheet") */}
-          <div className="sm:hidden flex justify-center pt-2 pb-1 flex-shrink-0">
-            <div className="w-10 h-1 rounded-full bg-white/30" />
+          <div className="sm:hidden flex justify-center pt-1 pb-0.5 flex-shrink-0">
+            <div className="w-7 h-0.5 rounded-full bg-white/30" />
           </div>
 
           {settingsTab === "main" && (
             <>
               {/* Mobile-only header for the main tab */}
-              <div className="sm:hidden flex items-center justify-between px-4 py-2 border-b border-white/5 flex-shrink-0">
+              <div className="sm:hidden flex items-center justify-between px-3 py-1 border-b border-white/5 flex-shrink-0">
                 <span className="font-medium">Settings</span>
                 <button
                   onClick={closeSettings}
-                  className="p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  className="p-1 -mr-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
                   aria-label="Close settings"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
               <button
                 onClick={() => setSettingsTab("speed")}
-                className="flex items-center justify-between w-full px-4 py-3 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors"
+                className="flex items-center justify-between w-full px-3 sm:px-4 py-1.5 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors"
               >
                 <span>Playback speed</span>
                 <span className="flex items-center gap-1.5 text-white/70">
@@ -1650,7 +1652,7 @@ export function YouTubeStylePlayer({
               {hlsLevels.length > 0 && (
                 <button
                   onClick={() => setSettingsTab("quality")}
-                  className="flex items-center justify-between w-full px-4 py-3 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors border-t border-white/5"
+                  className="flex items-center justify-between w-full px-3 sm:px-4 py-1.5 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors border-t border-white/5"
                 >
                   <span>Quality</span>
                   <span className="flex items-center gap-1.5 text-white/70">
@@ -1664,46 +1666,46 @@ export function YouTubeStylePlayer({
 
           {settingsTab === "speed" && (
             <div>
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+              <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2.5 border-b border-white/5">
                 <button
                   onClick={() => setSettingsTab("main")}
                   className="p-1 -ml-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
                   aria-label="Back"
                 >
-                  <ChevronLeft className="h-5 w-5" />
+                  <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
                 </button>
                 <span className="font-medium flex-1">Playback speed</span>
                 {/* Mobile-only close button */}
                 <button
                   onClick={closeSettings}
-                  className="sm:hidden p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  className="sm:hidden p-1 -mr-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
                   aria-label="Close settings"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
               {/* ✅ Fine-grained speed slider (0.25x – 4x) with visible track */}
-              <div className="px-4 py-3 border-b border-white/5">
-                <div className="flex items-center justify-between mb-2">
+              <div className="px-3 sm:px-4 py-1.5 sm:py-3 border-b border-white/5">
+                <div className="flex items-center justify-between mb-1 sm:mb-2">
                   <span className="text-xs text-white/60">Speed</span>
                   <span className="text-xs font-mono font-bold text-xan-crimson">
                     {Number.isInteger(playbackRate) ? `${playbackRate}.00` : playbackRate.toFixed(2)}x
                   </span>
                 </div>
                 {/* Custom slider with visible track + fill */}
-                {/* ✅ Taller touch zone on mobile (h-6) for easier drag; slimmer on desktop (h-4) */}
-                <div className="relative h-6 sm:h-4 flex items-center">
+                {/* ✅ Touch zone stays tall enough on mobile (h-4) for easy drag; desktop h-4 */}
+                <div className="relative h-4 sm:h-4 flex items-center">
                   {/* Track background */}
-                  <div className="absolute left-0 right-0 h-1.5 sm:h-1 rounded-full bg-white/25" />
+                  <div className="absolute left-0 right-0 h-0.5 sm:h-1 rounded-full bg-white/25" />
                   {/* Fill */}
                   <div
-                    className="absolute left-0 h-1.5 sm:h-1 rounded-full bg-xan-crimson transition-all"
+                    className="absolute left-0 h-0.5 sm:h-1 rounded-full bg-xan-crimson transition-all"
                     style={{ width: `${((playbackRate - 0.25) / (4 - 0.25)) * 100}%` }}
                   />
                   {/* Thumb */}
                   <div
-                    className="absolute w-3 h-3 rounded-full bg-white shadow-sm pointer-events-none"
-                    style={{ left: `calc(${((playbackRate - 0.25) / (4 - 0.25)) * 100}% - 6px)` }}
+                    className="absolute w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-white shadow-sm pointer-events-none"
+                    style={{ left: `calc(${((playbackRate - 0.25) / (4 - 0.25)) * 100}% - 4px)` }}
                   />
                   {/* Hidden native input on top — provides the actual touch/drag surface */}
                   <input
@@ -1729,12 +1731,12 @@ export function YouTubeStylePlayer({
                 </div>
               </div>
               {/* Preset buttons — don't close panel, just update speed */}
-              <div className="max-h-[200px] overflow-y-auto">
+              <div className="max-h-[130px] sm:max-h-[200px] overflow-y-auto">
               {PLAYBACK_RATES.map((rate) => (
                 <button
                   key={rate}
                   onClick={() => changeRate(rate)}
-                  className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+                  className="flex items-center justify-between w-full px-3 sm:px-4 py-1 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
                 >
                   <span>{rate}x{rate === 1 ? " (Normal)" : ""}</span>
                   {rate === playbackRate && <Check className="h-4 w-4 text-xan-crimson" />}
@@ -1746,22 +1748,22 @@ export function YouTubeStylePlayer({
 
           {settingsTab === "quality" && (
             <div>
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+              <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2.5 border-b border-white/5">
                 <button
                   onClick={() => setSettingsTab("main")}
                   className="p-1 -ml-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
                   aria-label="Back"
                 >
-                  <ChevronLeft className="h-5 w-5" />
+                  <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
                 </button>
                 <span className="font-medium flex-1">Quality</span>
                 {/* Mobile-only close button */}
                 <button
                   onClick={closeSettings}
-                  className="sm:hidden p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  className="sm:hidden p-1 -mr-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
                   aria-label="Close settings"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
               <button
@@ -1769,7 +1771,7 @@ export function YouTubeStylePlayer({
                   changeQuality(-1);
                   setSettingsTab("main");
                 }}
-                className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+                className="flex items-center justify-between w-full px-3 sm:px-4 py-1 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
               >
                 <span>Auto{currentLevel === -1 ? " (current)" : ""}</span>
                 {currentLevel === -1 && <Check className="h-4 w-4 text-xan-crimson" />}
@@ -1781,7 +1783,7 @@ export function YouTubeStylePlayer({
                     changeQuality(lvl.index);
                     setSettingsTab("main");
                   }}
-                  className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+                  className="flex items-center justify-between w-full px-3 sm:px-4 py-1 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
                 >
                   <span>{lvl.label}</span>
                   {currentLevel === lvl.index && <Check className="h-4 w-4 text-xan-crimson" />}
