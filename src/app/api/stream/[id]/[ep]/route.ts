@@ -111,11 +111,17 @@ function getKotoSource(
 
 // ✅ Fetch AnimePahe (nekostream) sources — server-side to bypass CORS
 // Response structure: {provider: {sub: {download: {quality: url}}, dub: {download: {quality: url}}}, status: {...}}
+//
+// ⚠️ Pahe sources are DOWNLOAD links, not direct stream URLs.
+// The chain is: pahe.nekostream.site → HTML download page → JS redirect →
+// proud-dew workers.dev → 302 → kwik.cx (Cloudflare 403).
+// We mark them as "iframe" type so they load in an iframe (showing the
+// download page). The user can click "Download" to get the file.
 async function fetchPaheSourcesServerSide(
   malId: number | null,
   episode: number,
   requestedMode: "sub" | "dub",
-): Promise<Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }>> {
+): Promise<Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }>> {
   if (!malId) return [];
 
   try {
@@ -134,7 +140,7 @@ async function fetchPaheSourcesServerSide(
     if (!res.ok) return [];
     const json = await res.json();
 
-    const sources: Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }> = [];
+    const sources: Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }> = [];
     for (const [providerKey, value] of Object.entries(json)) {
       if (providerKey === "status") continue;
       if (!value || typeof value !== "object") continue;
@@ -142,21 +148,18 @@ async function fetchPaheSourcesServerSide(
       const providerObj = value as Record<string, unknown>;
 
       // ✅ New structure: {provider: {sub: {download: {quality: url}}, dub: {download: {quality: url}}}}
-      // Try the sub/dub nested structure first
       const modeData = providerObj[requestedMode] as Record<string, unknown> | undefined;
       if (modeData && typeof modeData === "object") {
-        // modeData = {download: {quality: url}}
         for (const [downloadType, qualityObj] of Object.entries(modeData)) {
           if (qualityObj && typeof qualityObj === "object") {
             for (const [quality, urlVal] of Object.entries(qualityObj as Record<string, unknown>)) {
               if (typeof urlVal === "string" && urlVal.startsWith("http")) {
-                const finalUrl = urlVal.replace(
-                  "https://pahe.nekostream.site/",
-                  "https://proud-dew-d754.download992.workers.dev/",
-                );
+                // ✅ Use the ORIGINAL pahe.nekostream.site URL (not the workers.dev redirect).
+                // The workers.dev URL just redirects to kwik.cx which is Cloudflare-blocked.
+                // The pahe.nekostream.site URL shows a download page in the iframe.
                 sources.push({
-                  url: finalUrl,
-                  type: "mp4",
+                  url: urlVal,
+                  type: "iframe",
                   quality: quality || downloadType || null,
                   sourceName: `Pahe-${providerKey}`,
                   provider: "pahe",
@@ -171,13 +174,9 @@ async function fetchPaheSourcesServerSide(
       if (sources.length === 0) {
         for (const [quality, urlVal] of Object.entries(providerObj)) {
           if (typeof urlVal === "string" && urlVal.startsWith("http")) {
-            const finalUrl = urlVal.replace(
-              "https://pahe.nekostream.site/",
-              "https://proud-dew-d754.download992.workers.dev/",
-            );
             sources.push({
-              url: finalUrl,
-              type: "mp4",
+              url: urlVal,
+              type: "iframe",
               quality: quality || null,
               sourceName: `Pahe-${providerKey}`,
               provider: "pahe",

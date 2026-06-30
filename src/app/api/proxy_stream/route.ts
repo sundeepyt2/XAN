@@ -18,6 +18,18 @@ const ALLOWED_HOSTS = [
   "repackager.wixmp.com",
   "allanimenews.com",
   "sharepoint.com",
+  "fast4speed.rsvp",
+  "wixmp.com",
+  "pahe.nekostream.site",
+  "nekostream.site",
+  "kwik.cx",
+  "kwik.si",
+  "streamwish.to",
+  "megaplay.buzz",
+  "flixcloud.cc",
+  "gogoanime.fi",
+  "gogoanime.vc",
+  "gogoanime.dk",
 ];
 
 function isAllowedHost(urlStr: string): boolean {
