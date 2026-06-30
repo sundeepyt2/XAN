@@ -57,6 +57,7 @@ import {
   Zap,
   Shield,
   Cloud,
+  X,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 
@@ -802,6 +803,14 @@ export function YouTubeStylePlayer({
     seekTo(targetTime);
   }, [seekTo, skipIntroOffset]);
 
+  // ✅ Bug fix: Centralized close helper for the settings panel — used by the
+  // mobile close (X) button, the Escape key, the click-outside handler, and
+  // the video tap-while-open guard. Keeps the close logic DRY.
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+    setSettingsTab("main");
+  }, []);
+
   // ──────────────────────────────────────────────────────────────
   // Seek feedback (the "+10s"/"-10s" overlay when seeking via keyboard)
   // ──────────────────────────────────────────────────────────────
@@ -881,8 +890,7 @@ export function YouTubeStylePlayer({
       const target = e.target as HTMLElement;
       // Check if click was inside the settings panel OR the settings gear button
       if (!target.closest("[data-settings-panel]") && !target.closest("[data-settings-button]")) {
-        setShowSettings(false);
-        setSettingsTab("main");
+        closeSettings();
       }
     };
     // Use mousedown instead of click — fires before the click event processes,
@@ -891,7 +899,7 @@ export function YouTubeStylePlayer({
     return () => {
       document.removeEventListener("mousedown", handler);
     };
-  }, [showSettings]);
+  }, [showSettings, closeSettings]);
 
   // ──────────────────────────────────────────────────────────────
   // Keyboard shortcuts
@@ -1007,8 +1015,7 @@ export function YouTubeStylePlayer({
           // when it's only meant to close the settings panel.
           if (showSettings) {
             e.preventDefault();
-            setShowSettings(false);
-            setSettingsTab("main");
+            closeSettings();
           }
           break;
         default:
@@ -1028,6 +1035,7 @@ export function YouTubeStylePlayer({
     changeVolume,
     changeRate,
     togglePip,
+    closeSettings,
     volume,
     playbackRate,
     showControls,
@@ -1092,6 +1100,9 @@ export function YouTubeStylePlayer({
   // ──────────────────────────────────────────────────────────────
   const onVideoTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
+    // ✅ Bug fix: Don't process double-tap-to-seek when a menu is open —
+    // taps on the video area should close the menu, not seek.
+    if (showSettingsRef.current || showShortcutsRef.current) return;
     const touch = e.touches[0];
     const container = containerRef.current;
     if (!container) return;
@@ -1119,13 +1130,27 @@ export function YouTubeStylePlayer({
   // ──────────────────────────────────────────────────────────────
   // Click handler (toggle play, but ignore if it's part of dblclick → fullscreen)
   // ──────────────────────────────────────────────────────────────
+  // ✅ Bug fix: If the settings panel or shortcuts overlay is open, a tap on
+  // the video area should CLOSE the panel — not toggle playback. Without this
+  // guard, mobile users tapping the video to dismiss the settings sheet would
+  // accidentally pause/resume the video.
   const onVideoClick = useCallback(() => {
+    if (showSettingsRef.current) {
+      closeSettings();
+      return;
+    }
+    if (showShortcutsRef.current) {
+      setShowShortcuts(false);
+      return;
+    }
     togglePlay();
     showControls();
     scheduleHide();
-  }, [togglePlay, showControls, scheduleHide]);
+  }, [togglePlay, showControls, scheduleHide, closeSettings]);
 
   const onVideoDoubleClick = useCallback(() => {
+    // Don't toggle fullscreen if a menu is open (let the single-click close it first)
+    if (showSettingsRef.current || showShortcutsRef.current) return;
     toggleFullscreen();
   }, [toggleFullscreen]);
 
@@ -1538,6 +1563,12 @@ export function YouTubeStylePlayer({
             </button>
 
             {/* Settings (gear) */}
+            {/* ✅ Bug fix: The settings panel is now rendered as a child of the
+                player container (see below) — NOT inside this relative wrapper.
+                On mobile, the panel is a full-width bottom sheet; on desktop, a
+                right-aligned popover. Decoupling the panel from the gear button
+                prevents positioning bugs when the controls row wraps on narrow
+                screens. */}
             <div className="relative flex-shrink-0">
               <button
                 data-settings-button
@@ -1545,159 +1576,12 @@ export function YouTubeStylePlayer({
                   setShowSettings((v) => !v);
                   setSettingsTab("main");
                 }}
-                className={`p-1.5 rounded hover:bg-white/15 transition-colors ${showSettings ? "bg-white/15" : ""}`}
+                className={`p-1.5 rounded hover:bg-white/15 active:bg-white/25 transition-colors ${showSettings ? "bg-white/15" : ""}`}
                 aria-label="Settings"
                 title="Settings"
               >
                 <Settings className="h-5 w-5" />
               </button>
-
-              {showSettings && (
-                <div
-                  data-settings-panel
-                  className="absolute bottom-full right-0 mb-2 w-64 max-w-[calc(100vw-0.5rem)] max-h-[60vh] z-50 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  {settingsTab === "main" && (
-                    <>
-                      <button
-                        onClick={() => setSettingsTab("speed")}
-                        className="flex items-center justify-between w-full px-4 py-2.5 hover:bg-white/10 transition-colors"
-                      >
-                        <span>Playback speed</span>
-                        <span className="flex items-center gap-1.5 text-white/70">
-                          {Number.isInteger(playbackRate) ? playbackRate : playbackRate.toFixed(2)}x
-                          <ChevronRight className="h-4 w-4" />
-                        </span>
-                      </button>
-                      {hlsLevels.length > 0 && (
-                        <button
-                          onClick={() => setSettingsTab("quality")}
-                          className="flex items-center justify-between w-full px-4 py-2.5 hover:bg-white/10 transition-colors border-t border-white/5"
-                        >
-                          <span>Quality</span>
-                          <span className="flex items-center gap-1.5 text-white/70">
-                            {qualityLabel}
-                            <ChevronRight className="h-4 w-4" />
-                          </span>
-                        </button>
-                      )}
-                    </>
-                  )}
-
-                  {settingsTab === "speed" && (
-                    <div>
-                      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
-                        <button
-                          onClick={() => setSettingsTab("main")}
-                          className="p-0.5 rounded hover:bg-white/10"
-                          aria-label="Back"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <span className="font-medium">Playback speed</span>
-                      </div>
-                      {/* ✅ Fine-grained speed slider (0.25x – 4x) with visible track */}
-                      <div className="px-4 py-3 border-b border-white/5">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs text-white/60">Speed</span>
-                          <span className="text-xs font-mono font-bold text-xan-crimson">
-                            {Number.isInteger(playbackRate) ? `${playbackRate}.00` : playbackRate.toFixed(2)}x
-                          </span>
-                        </div>
-                        {/* Custom slider with visible track + fill */}
-                        <div className="relative h-4 flex items-center">
-                          {/* Track background */}
-                          <div className="absolute left-0 right-0 h-1 rounded-full bg-white/25" />
-                          {/* Fill */}
-                          <div
-                            className="absolute left-0 h-1 rounded-full bg-xan-crimson transition-all"
-                            style={{ width: `${((playbackRate - 0.25) / (4 - 0.25)) * 100}%` }}
-                          />
-                          {/* Thumb */}
-                          <div
-                            className="absolute w-3 h-3 rounded-full bg-white shadow-sm pointer-events-none"
-                            style={{ left: `calc(${((playbackRate - 0.25) / (4 - 0.25)) * 100}% - 6px)` }}
-                          />
-                          {/* Hidden native input on top */}
-                          <input
-                            type="range"
-                            min={0.25}
-                            max={4}
-                            step={0.05}
-                            value={playbackRate}
-                            onChange={(e) => changeRate(Number(e.target.value))}
-                            onClick={(e) => e.stopPropagation()}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onTouchStart={(e) => e.stopPropagation()}
-                            className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                            aria-label="Playback speed slider"
-                            style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
-                          />
-                        </div>
-                        <div className="flex justify-between text-[9px] text-white/30 mt-1 px-0.5">
-                          <span>0.25x</span>
-                          <span>1x</span>
-                          <span>2x</span>
-                          <span>4x</span>
-                        </div>
-                      </div>
-                      {/* Preset buttons — don't close panel, just update speed */}
-                      <div className="max-h-[200px] overflow-y-auto">
-                      {PLAYBACK_RATES.map((rate) => (
-                        <button
-                          key={rate}
-                          onClick={() => changeRate(rate)}
-                          className="flex items-center justify-between w-full px-4 py-2 hover:bg-white/10 transition-colors"
-                        >
-                          <span>{rate}x{rate === 1 ? " (Normal)" : ""}</span>
-                          {rate === playbackRate && <Check className="h-4 w-4 text-xan-crimson" />}
-                        </button>
-                      ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {settingsTab === "quality" && (
-                    <div>
-                      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
-                        <button
-                          onClick={() => setSettingsTab("main")}
-                          className="p-0.5 rounded hover:bg-white/10"
-                          aria-label="Back"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <span className="font-medium">Quality</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          changeQuality(-1);
-                          setSettingsTab("main");
-                        }}
-                        className="flex items-center justify-between w-full px-4 py-2 hover:bg-white/10 transition-colors"
-                      >
-                        <span>Auto{currentLevel === -1 ? " (current)" : ""}</span>
-                        {currentLevel === -1 && <Check className="h-4 w-4 text-xan-crimson" />}
-                      </button>
-                      {hlsLevels.map((lvl) => (
-                        <button
-                          key={lvl.index}
-                          onClick={() => {
-                            changeQuality(lvl.index);
-                            setSettingsTab("main");
-                          }}
-                          className="flex items-center justify-between w-full px-4 py-2 hover:bg-white/10 transition-colors"
-                        >
-                          <span>{lvl.label}</span>
-                          {currentLevel === lvl.index && <Check className="h-4 w-4 text-xan-crimson" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* PiP */}
@@ -1722,6 +1606,191 @@ export function YouTubeStylePlayer({
           </div>
         </div>
       </div>
+
+      {/* ── Settings panel (responsive) ── */}
+      {/* ✅ Mobile: full-width bottom sheet anchored to the player's bottom edge.
+          Desktop (sm+): right-aligned popover anchored above the gear button.
+          Decoupled from the gear button's DOM position so it works correctly
+          even when the controls row wraps on narrow screens. */}
+      {showSettings && (
+        <div
+          data-settings-panel
+          className="absolute bottom-0 left-0 right-0 max-h-[50vh] sm:bottom-full sm:left-auto sm:right-3 sm:mb-2 sm:w-64 sm:max-h-[60vh] z-50 rounded-t-xl sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Mobile drag handle (visual affordance — not draggable, but signals "bottom sheet") */}
+          <div className="sm:hidden flex justify-center pt-2 pb-1 flex-shrink-0">
+            <div className="w-10 h-1 rounded-full bg-white/30" />
+          </div>
+
+          {settingsTab === "main" && (
+            <>
+              {/* Mobile-only header for the main tab */}
+              <div className="sm:hidden flex items-center justify-between px-4 py-2 border-b border-white/5 flex-shrink-0">
+                <span className="font-medium">Settings</span>
+                <button
+                  onClick={closeSettings}
+                  className="p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  aria-label="Close settings"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <button
+                onClick={() => setSettingsTab("speed")}
+                className="flex items-center justify-between w-full px-4 py-3 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors"
+              >
+                <span>Playback speed</span>
+                <span className="flex items-center gap-1.5 text-white/70">
+                  {Number.isInteger(playbackRate) ? playbackRate : playbackRate.toFixed(2)}x
+                  <ChevronRight className="h-4 w-4" />
+                </span>
+              </button>
+              {hlsLevels.length > 0 && (
+                <button
+                  onClick={() => setSettingsTab("quality")}
+                  className="flex items-center justify-between w-full px-4 py-3 sm:py-2.5 hover:bg-white/10 active:bg-white/20 transition-colors border-t border-white/5"
+                >
+                  <span>Quality</span>
+                  <span className="flex items-center gap-1.5 text-white/70">
+                    {qualityLabel}
+                    <ChevronRight className="h-4 w-4" />
+                  </span>
+                </button>
+              )}
+            </>
+          )}
+
+          {settingsTab === "speed" && (
+            <div>
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+                <button
+                  onClick={() => setSettingsTab("main")}
+                  className="p-1 -ml-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  aria-label="Back"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <span className="font-medium flex-1">Playback speed</span>
+                {/* Mobile-only close button */}
+                <button
+                  onClick={closeSettings}
+                  className="sm:hidden p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  aria-label="Close settings"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {/* ✅ Fine-grained speed slider (0.25x – 4x) with visible track */}
+              <div className="px-4 py-3 border-b border-white/5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-white/60">Speed</span>
+                  <span className="text-xs font-mono font-bold text-xan-crimson">
+                    {Number.isInteger(playbackRate) ? `${playbackRate}.00` : playbackRate.toFixed(2)}x
+                  </span>
+                </div>
+                {/* Custom slider with visible track + fill */}
+                {/* ✅ Taller touch zone on mobile (h-6) for easier drag; slimmer on desktop (h-4) */}
+                <div className="relative h-6 sm:h-4 flex items-center">
+                  {/* Track background */}
+                  <div className="absolute left-0 right-0 h-1.5 sm:h-1 rounded-full bg-white/25" />
+                  {/* Fill */}
+                  <div
+                    className="absolute left-0 h-1.5 sm:h-1 rounded-full bg-xan-crimson transition-all"
+                    style={{ width: `${((playbackRate - 0.25) / (4 - 0.25)) * 100}%` }}
+                  />
+                  {/* Thumb */}
+                  <div
+                    className="absolute w-3 h-3 rounded-full bg-white shadow-sm pointer-events-none"
+                    style={{ left: `calc(${((playbackRate - 0.25) / (4 - 0.25)) * 100}% - 6px)` }}
+                  />
+                  {/* Hidden native input on top — provides the actual touch/drag surface */}
+                  <input
+                    type="range"
+                    min={0.25}
+                    max={4}
+                    step={0.05}
+                    value={playbackRate}
+                    onChange={(e) => changeRate(Number(e.target.value))}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                    aria-label="Playback speed slider"
+                    style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
+                  />
+                </div>
+                <div className="flex justify-between text-[9px] text-white/30 mt-1 px-0.5">
+                  <span>0.25x</span>
+                  <span>1x</span>
+                  <span>2x</span>
+                  <span>4x</span>
+                </div>
+              </div>
+              {/* Preset buttons — don't close panel, just update speed */}
+              <div className="max-h-[200px] overflow-y-auto">
+              {PLAYBACK_RATES.map((rate) => (
+                <button
+                  key={rate}
+                  onClick={() => changeRate(rate)}
+                  className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+                >
+                  <span>{rate}x{rate === 1 ? " (Normal)" : ""}</span>
+                  {rate === playbackRate && <Check className="h-4 w-4 text-xan-crimson" />}
+                </button>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {settingsTab === "quality" && (
+            <div>
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+                <button
+                  onClick={() => setSettingsTab("main")}
+                  className="p-1 -ml-1 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  aria-label="Back"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <span className="font-medium flex-1">Quality</span>
+                {/* Mobile-only close button */}
+                <button
+                  onClick={closeSettings}
+                  className="sm:hidden p-1.5 -mr-1.5 rounded hover:bg-white/10 active:bg-white/20 transition-colors"
+                  aria-label="Close settings"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  changeQuality(-1);
+                  setSettingsTab("main");
+                }}
+                className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+              >
+                <span>Auto{currentLevel === -1 ? " (current)" : ""}</span>
+                {currentLevel === -1 && <Check className="h-4 w-4 text-xan-crimson" />}
+              </button>
+              {hlsLevels.map((lvl) => (
+                <button
+                  key={lvl.index}
+                  onClick={() => {
+                    changeQuality(lvl.index);
+                    setSettingsTab("main");
+                  }}
+                  className="flex items-center justify-between w-full px-4 py-2.5 sm:py-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+                >
+                  <span>{lvl.label}</span>
+                  {currentLevel === lvl.index && <Check className="h-4 w-4 text-xan-crimson" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {showShortcuts && (
         <KeyboardShortcutsOverlay onClose={() => setShowShortcuts(false)} />
