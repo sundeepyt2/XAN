@@ -1611,13 +1611,15 @@ export function YouTubeStylePlayer({
 
       {/* ── Settings panel (responsive) ── */}
       {/* ✅ Mobile: full-width bottom sheet anchored to the player's bottom edge.
-          Desktop (sm+): right-aligned popover anchored above the gear button.
-          Decoupled from the gear button's DOM position so it works correctly
-          even when the controls row wraps on narrow screens. */}
+          Desktop (sm+): right-aligned popover positioned INSIDE the container,
+          above the controls bar. Must stay inside the container because the
+          container has `overflow-hidden` (for rounded corners) — positioning
+          outside (e.g. bottom-full) would clip the panel entirely, making it
+          invisible on desktop AND in fullscreen mode. */}
       {showSettings && (
         <div
           data-settings-panel
-          className="absolute bottom-0 left-0 right-0 max-h-[36vh] text-[12px] sm:bottom-full sm:left-auto sm:right-3 sm:mb-2 sm:w-64 sm:max-h-[60vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
+          className="absolute bottom-0 left-0 right-0 max-h-[36vh] text-[12px] sm:bottom-14 sm:left-auto sm:right-3 sm:w-64 sm:max-h-[60vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
