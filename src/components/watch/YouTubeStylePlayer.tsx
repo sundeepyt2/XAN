@@ -344,6 +344,7 @@ export function YouTubeStylePlayer({
   // UI state
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("main");
   const [controlsVisible, setControlsVisible] = useState(true);
   const [timeMode, setTimeMode] = useState<TimeMode>("duration");
@@ -1362,7 +1363,7 @@ export function YouTubeStylePlayer({
 
       {/* ── Bottom controls bar ── */}
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-3 pb-2 pt-10 ${controlsClass}`}
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-2 sm:px-3 pb-1.5 sm:pb-2 pt-10 overflow-x-hidden ${controlsClass}`}
       >
         {/* Seekbar */}
         <div
@@ -1408,13 +1409,13 @@ export function YouTubeStylePlayer({
           )}
         </div>
 
-        {/* Buttons row */}
-        <div className="flex items-center justify-between text-white">
+        {/* Buttons row — responsive: wraps on small screens, no overflow */}
+        <div className="flex items-center justify-between text-white gap-1 flex-wrap min-h-[28px]">
           {/* Left cluster */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
             <button
               onClick={togglePlay}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0"
               aria-label={playing ? "Pause" : "Play"}
               title={playing ? "Pause (k)" : "Play (k)"}
             >
@@ -1427,7 +1428,7 @@ export function YouTubeStylePlayer({
 
             <button
               onClick={() => seekByWithFeedback(-10)}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors hidden sm:block"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0 hidden sm:block"
               aria-label="Back 10 seconds"
               title="Back 10s (J / ←)"
             >
@@ -1435,54 +1436,55 @@ export function YouTubeStylePlayer({
             </button>
             <button
               onClick={() => seekByWithFeedback(10)}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors hidden sm:block"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0 hidden sm:block"
               aria-label="Forward 10 seconds"
               title="Forward 10s (L / →)"
             >
               <RotateCw className="h-4 w-4" />
             </button>
 
-            {/* ✅ Volume — redesigned with visible track + fill (like the seekbar) */}
-            <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* ✅ Volume — tap to slide out slider, tap again to hide. Mute is separate. */}
+            <div className="flex items-center flex-shrink-0">
               <button
-                onClick={toggleMute}
+                onClick={() => setShowVolumeSlider((v) => !v)}
                 className="p-1.5 rounded hover:bg-white/15 transition-colors"
                 aria-label={muted ? "Unmute" : "Mute"}
                 title={muted ? "Unmute (M)" : "Mute (M)"}
               >
                 <VolumeIcon className="h-5 w-5" />
               </button>
-              {/* Custom volume slider with visible track + fill + thumb */}
-              <div className="relative w-14 h-3 flex items-center group/vol-slider">
-                <div className="absolute left-0 right-0 h-1 rounded-full bg-white/25" />
-                <div
-                  className="absolute left-0 h-1 rounded-full bg-white transition-all"
-                  style={{ width: `${(muted ? 0 : volume) * 100}%` }}
-                />
-                <div
-                  className="absolute w-2.5 h-2.5 rounded-full bg-white shadow-sm opacity-0 group-hover/vol-slider:opacity-100 transition-opacity pointer-events-none"
-                  style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 5px)` }}
-                />
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.02}
-                  value={muted ? 0 : volume}
-                  onChange={(e) => changeVolume(Number(e.target.value))}
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                  aria-label="Volume"
-                  style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
-                />
+              {/* Slider — hidden by default, slides out on tap */}
+              <div
+                className={`overflow-hidden transition-all duration-200 ease-out ${showVolumeSlider ? "w-14 opacity-100" : "w-0 opacity-0"}`}
+              >
+                <div className="relative h-3 flex items-center px-1">
+                  <div className="absolute left-1 right-1 h-1 rounded-full bg-white/25" />
+                  <div
+                    className="absolute left-1 h-1 rounded-full bg-white transition-all"
+                    style={{ width: `calc(${(muted ? 0 : volume) * 100}% * 0.85)` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={muted ? 0 : volume}
+                    onChange={(e) => changeVolume(Number(e.target.value))}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                    aria-label="Volume"
+                    style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Time display (click to toggle duration ↔ remaining) */}
+            {/* Time display — hidden on very small screens to save space */}
             <button
               onClick={() => setTimeMode((m) => (m === "duration" ? "remaining" : "duration"))}
-              className="text-xs font-mono px-1.5 py-0.5 rounded hover:bg-white/15 transition-colors whitespace-nowrap"
+              className="text-xs font-mono px-1 py-0.5 rounded hover:bg-white/15 transition-colors whitespace-nowrap flex-shrink-0 hidden sm:block"
               title="Click to toggle remaining time (T)"
             >
               {timeDisplay}
@@ -1490,11 +1492,11 @@ export function YouTubeStylePlayer({
           </div>
 
           {/* Right cluster */}
-          <div className="flex items-center gap-1.5">
-            {/* ✅ Skip button — >> style (double chevron), permanent, white */}
+          <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
+            {/* ✅ Skip button — >> style */}
             <button
               onClick={skipIntro}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors text-white flex items-center"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors text-white flex items-center flex-shrink-0"
               aria-label="Skip forward"
               title={`Skip forward (${skipIntroOffset}s)`}
             >
@@ -1502,8 +1504,8 @@ export function YouTubeStylePlayer({
               <ChevronRight className="h-5 w-5 -ml-3" />
             </button>
 
-            {/* Settings (gear) → multi-level panel */}
-            <div className="relative">
+            {/* Settings (gear) */}
+            <div className="relative flex-shrink-0">
               <button
                 data-settings-button
                 onClick={() => {
@@ -1647,7 +1649,7 @@ export function YouTubeStylePlayer({
             {/* PiP */}
             <button
               onClick={togglePip}
-              className={`p-1.5 rounded hover:bg-white/15 transition-colors ${isPip ? "text-xan-crimson" : "text-white"}`}
+              className={`p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0 ${isPip ? "text-xan-crimson" : "text-white"}`}
               aria-label="Picture-in-Picture"
               title="Picture-in-Picture (P)"
             >
@@ -1657,7 +1659,7 @@ export function YouTubeStylePlayer({
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="p-1.5 rounded hover:bg-white/15 transition-colors"
+              className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0"
               aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
               title={isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
             >
