@@ -23,6 +23,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: [">", "<"], action: "Speed up / down" },
   { keys: ["0", "9"], action: "Seek to 0% / 90%" },
   { keys: ["P"], action: "Toggle Picture-in-Picture" },
+  { keys: ["E"], action: "Toggle Video Enhancer" },
   { keys: ["T"], action: "Toggle time display (remaining)" },
   { keys: ["R"], action: "Toggle loop" },
   { keys: ["N"], action: "Next episode" },

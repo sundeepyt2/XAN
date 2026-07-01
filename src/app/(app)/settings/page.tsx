@@ -42,6 +42,17 @@ import {
   ListVideo,
   MonitorPlay,
   Filter,
+  Wand2,
+  Save,
+  Pencil,
+  Bookmark,
+  Power,
+  Eye,
+  Contrast,
+  Rainbow,
+  CircleDashed,
+  Droplet,
+  Ghost,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -75,6 +86,12 @@ import {
 import { useSettings, DEFAULT_SETTINGS, type Settings } from "@/hooks/useSettings";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
 import { useBandwidthStats, type TierResult } from "@/hooks/useBandwidthStats";
+import {
+  useVideoEnhancer,
+  ENHANCER_PRESETS,
+  MAX_CUSTOM_PRESETS,
+  type CustomPreset,
+} from "@/hooks/useVideoEnhancer";
 
 // ─── Section definitions (for nav chips + rendering) ───────────────────────
 
@@ -82,6 +99,7 @@ type SectionId =
   | "appearance"
   | "playback"
   | "audio"
+  | "enhancer"
   | "bandwidth"
   | "content"
   | "data"
@@ -91,6 +109,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Palette }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "playback", label: "Playback", icon: Play },
   { id: "audio", label: "Audio & Subtitles", icon: Languages },
+  { id: "enhancer", label: "Video Enhancer", icon: Wand2 },
   { id: "bandwidth", label: "Bandwidth", icon: Zap },
   { id: "content", label: "Content & Discovery", icon: ShieldCheck },
   { id: "data", label: "Data & Privacy", icon: Database },
@@ -128,10 +147,14 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { history, clearHistory } = useWatchHistory();
   const { stats: tierStats, since: tierStatsSince, clearStats: clearTierStats } = useBandwidthStats();
+  const enhancer = useVideoEnhancer();
   const [activeSection, setActiveSection] = useState<SectionId>("appearance");
   const [exported, setExported] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [clearStatsOpen, setClearStatsOpen] = useState(false);
+  const [enhancerSaveName, setEnhancerSaveName] = useState("");
+  const [enhancerRenamingId, setEnhancerRenamingId] = useState<string | null>(null);
+  const [enhancerRenameValue, setEnhancerRenameValue] = useState("");
 
   // Scroll spy: highlight nav chip for the section currently in view
   useEffect(() => {
@@ -405,6 +428,253 @@ export default function SettingsPage() {
                 ))}
               </div>
             </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Video Enhancer ─── */}
+      <section id="enhancer" className="scroll-mt-32">
+        <SectionHeader
+          icon={Wand2}
+          title="Video Enhancer"
+          description="Color grading for the video player — brightness, contrast, saturation, gamma, sharpen, and more. Works on all source types."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6 divide-y divide-xan-border/60">
+            {/* Master on/off */}
+            <SettingRow
+              icon={Power}
+              title="Enable Video Enhancer"
+              description="When on, color grading is applied to the video. When off, all filters are bypassed even if values are non-default. Press E while watching to toggle."
+            >
+              <Switch
+                checked={enhancer.state.enabled}
+                onCheckedChange={() => enhancer.toggleEnabled()}
+              />
+            </SettingRow>
+
+            {/* Status row */}
+            <div className="pt-2">
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded font-bold tracking-wider ${
+                    enhancer.active
+                      ? "bg-xan-crimson/20 text-xan-crimson border border-xan-crimson/30"
+                      : "bg-xan-card text-muted-foreground border border-xan-border"
+                  }`}
+                >
+                  <Power className="h-3 w-3" />
+                  {enhancer.active ? "ACTIVE" : enhancer.state.enabled ? "ENABLED (no changes)" : "OFF"}
+                </span>
+                {enhancer.active && (
+                  <span className="text-muted-foreground">
+                    {enhancer.state.brightness !== 100 && `B ${enhancer.state.brightness}% · `}
+                    {enhancer.state.contrast !== 100 && `C ${enhancer.state.contrast}% · `}
+                    {enhancer.state.saturation !== 100 && `S ${enhancer.state.saturation}% · `}
+                    {enhancer.state.hue !== 0 && `H ${enhancer.state.hue}° · `}
+                    {enhancer.state.gamma !== 1.0 && Math.abs(enhancer.state.gamma - 1.0) > 0.001 && `γ ${enhancer.state.gamma.toFixed(2)} · `}
+                    {enhancer.state.sharpen !== 0 && `Sharp ${enhancer.state.sharpen}% · `}
+                    {enhancer.state.blur !== 0 && `Blur ${enhancer.state.blur}px · `}
+                    {enhancer.state.sepia !== 0 && `Sepia ${enhancer.state.sepia}% · `}
+                    {enhancer.state.grayscale !== 0 && `Gray ${enhancer.state.grayscale}%`}
+                  </span>
+                )}
+                {!enhancer.active && enhancer.state.enabled && (
+                  <span className="text-muted-foreground">
+                    Enhancer is on but all values are at default — adjust sliders in the player to apply color grading.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Built-in presets */}
+            <SettingRow
+              icon={Sparkles}
+              title="Built-in presets"
+              description="Quick one-tap color grading presets. Click to apply — the enhancer turns on automatically."
+              stacked
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {Object.entries(ENHANCER_PRESETS).map(([id, preset]) => (
+                  <button
+                    key={id}
+                    onClick={() => enhancer.applyPreset(id as keyof typeof ENHANCER_PRESETS)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-all bg-xan-card/60 border-xan-border text-foreground hover:border-xan-crimson/40 hover:bg-xan-card"
+                  >
+                    <span className="text-sm">{preset.emoji}</span>
+                    <span className="truncate">{preset.label}</span>
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+
+            {/* Custom presets */}
+            <SettingRow
+              icon={Bookmark}
+              title={`My presets (${enhancer.customPresets.length}/${MAX_CUSTOM_PRESETS})`}
+              description="Save your favorite combinations. Adjust sliders in the player, then save here. Rename or delete anytime."
+              stacked
+            >
+              {enhancer.canSaveMoreCustom ? (
+                <div className="flex items-center gap-2 mb-3">
+                  <input
+                    value={enhancerSaveName}
+                    onChange={(e) => setEnhancerSaveName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && enhancerSaveName.trim()) {
+                        enhancer.saveCustomPreset(enhancerSaveName);
+                        setEnhancerSaveName("");
+                      }
+                    }}
+                    maxLength={24}
+                    placeholder="Preset name…"
+                    className="flex-1 bg-xan-card border border-xan-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-xan-crimson/50"
+                  />
+                  <Button
+                    onClick={() => {
+                      if (enhancerSaveName.trim()) {
+                        enhancer.saveCustomPreset(enhancerSaveName);
+                        setEnhancerSaveName("");
+                      }
+                    }}
+                    disabled={!enhancerSaveName.trim() || !enhancer.active}
+                    size="sm"
+                    className="bg-gradient-to-r from-xan-crimson to-xan-violet text-white border-0 hover:opacity-90"
+                  >
+                    <Save className="h-3.5 w-3.5 mr-1" />
+                    Save
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-amber-400/80 mb-3">
+                  Preset limit reached ({MAX_CUSTOM_PRESETS}/{MAX_CUSTOM_PRESETS}). Delete one to add more.
+                </p>
+              )}
+
+              {enhancer.customPresets.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">
+                  No saved presets yet. Adjust the enhancer sliders in the player, then come back here to save your combination.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {enhancer.customPresets.map((cp: CustomPreset) => {
+                    const isRenaming = enhancerRenamingId === cp.id;
+                    return (
+                      <div
+                        key={cp.id}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-xan-border bg-xan-card/60"
+                      >
+                        {isRenaming ? (
+                          <input
+                            value={enhancerRenameValue}
+                            onChange={(e) => setEnhancerRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && enhancerRenameValue.trim()) {
+                                enhancer.renameCustomPreset(cp.id, enhancerRenameValue);
+                                setEnhancerRenamingId(null);
+                                setEnhancerRenameValue("");
+                              } else if (e.key === "Escape") {
+                                setEnhancerRenamingId(null);
+                                setEnhancerRenameValue("");
+                              }
+                            }}
+                            onBlur={() => {
+                              if (enhancerRenameValue.trim()) {
+                                enhancer.renameCustomPreset(cp.id, enhancerRenameValue);
+                              }
+                              setEnhancerRenamingId(null);
+                              setEnhancerRenameValue("");
+                            }}
+                            autoFocus
+                            maxLength={24}
+                            className="flex-1 bg-xan-card border border-xan-crimson/50 rounded px-2 py-1 text-sm text-foreground outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => enhancer.applyCustomPreset(cp.id)}
+                            className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                          >
+                            <Bookmark className="h-3.5 w-3.5 text-xan-crimson flex-shrink-0" />
+                            <span className="truncate text-sm font-medium">{cp.name}</span>
+                          </button>
+                        )}
+                        {!isRenaming && (
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => {
+                                setEnhancerRenamingId(cp.id);
+                                setEnhancerRenameValue(cp.name);
+                              }}
+                              className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={`Rename ${cp.name}`}
+                              title="Rename"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => enhancer.deleteCustomPreset(cp.id)}
+                              className="p-1.5 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                              aria-label={`Delete ${cp.name}`}
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </SettingRow>
+
+            {/* Manual controls — all 9 sliders */}
+            <SettingRow
+              icon={Wand2}
+              title="Manual controls"
+              description="Fine-tune each effect. Double-click a slider's label to reset it. Changes apply live to the video player."
+              stacked
+            >
+              <div className="space-y-4 pt-2">
+                <EnhancerSliderRow icon={<Sun className="h-3.5 w-3.5" />} label="Brightness" value={enhancer.state.brightness} min={0} max={200} step={1} defaultValue={100} format={(v) => `${v}%`} onChange={(v) => enhancer.update("brightness", v)} onReset={() => enhancer.update("brightness", 100)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Contrast className="h-3.5 w-3.5" />} label="Contrast" value={enhancer.state.contrast} min={0} max={200} step={1} defaultValue={100} format={(v) => `${v}%`} onChange={(v) => enhancer.update("contrast", v)} onReset={() => enhancer.update("contrast", 100)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Palette className="h-3.5 w-3.5" />} label="Saturation" value={enhancer.state.saturation} min={0} max={200} step={1} defaultValue={100} format={(v) => `${v}%`} onChange={(v) => enhancer.update("saturation", v)} onReset={() => enhancer.update("saturation", 100)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Rainbow className="h-3.5 w-3.5" />} label="Hue Rotate" value={enhancer.state.hue} min={-180} max={180} step={1} defaultValue={0} format={(v) => `${v > 0 ? "+" : ""}${v}°`} onChange={(v) => enhancer.update("hue", v)} onReset={() => enhancer.update("hue", 0)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Activity className="h-3.5 w-3.5" />} label="Gamma" value={enhancer.state.gamma} min={0.2} max={3.0} step={0.01} defaultValue={1.0} format={(v) => v.toFixed(2)} onChange={(v) => enhancer.update("gamma", Math.round(v * 100) / 100)} onReset={() => enhancer.update("gamma", 1.0)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Sparkles className="h-3.5 w-3.5" />} label="Sharpen" value={enhancer.state.sharpen} min={0} max={100} step={1} defaultValue={0} format={(v) => `${v}%`} onChange={(v) => enhancer.update("sharpen", v)} onReset={() => enhancer.update("sharpen", 0)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<CircleDashed className="h-3.5 w-3.5" />} label="Blur" value={enhancer.state.blur} min={0} max={10} step={0.1} defaultValue={0} format={(v) => `${v.toFixed(1)}px`} onChange={(v) => enhancer.update("blur", Math.round(v * 10) / 10)} onReset={() => enhancer.update("blur", 0)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Droplet className="h-3.5 w-3.5" />} label="Sepia" value={enhancer.state.sepia} min={0} max={100} step={1} defaultValue={0} format={(v) => `${v}%`} onChange={(v) => enhancer.update("sepia", v)} onReset={() => enhancer.update("sepia", 0)} disabled={!enhancer.state.enabled} />
+                <EnhancerSliderRow icon={<Ghost className="h-3.5 w-3.5" />} label="Grayscale" value={enhancer.state.grayscale} min={0} max={100} step={1} defaultValue={0} format={(v) => `${v}%`} onChange={(v) => enhancer.update("grayscale", v)} onReset={() => enhancer.update("grayscale", 0)} disabled={!enhancer.state.enabled} />
+              </div>
+            </SettingRow>
+
+            {/* Reset */}
+            <SettingRow
+              icon={RotateCcw}
+              title="Reset enhancer to defaults"
+              description="Turns off the enhancer and resets all 9 controls (brightness, contrast, saturation, hue, gamma, sharpen, blur, sepia, grayscale) to their neutral values. Custom presets are NOT deleted."
+            >
+              <Button
+                onClick={() => enhancer.reset()}
+                variant="secondary"
+                size="sm"
+                className="bg-xan-card border-xan-border hover:bg-xan-card-hover"
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                Reset
+              </Button>
+            </SettingRow>
+
+            {/* Tip */}
+            <div className="pt-2 flex items-start gap-2 text-xs text-muted-foreground">
+              <Eye className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-xan-crimson" />
+              <p className="leading-relaxed">
+                <strong className="text-foreground">Tip:</strong> Open any video and click the wand icon
+                <Wand2 className="inline h-3 w-3 mx-0.5 text-xan-crimson" />
+                in the top-right corner to access the live enhancer panel. Press <kbd className="px-1 py-0.5 rounded bg-xan-card border border-xan-border text-[10px] font-mono">E</kbd> to toggle,
+                or hold the "Hold to compare" button to peek at the original.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </section>
@@ -1231,6 +1501,67 @@ function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
           </tfoot>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─── Enhancer slider row (used in the Video Enhancer settings section) ──────
+
+function EnhancerSliderRow({
+  icon,
+  label,
+  value,
+  min,
+  max,
+  step,
+  defaultValue,
+  format,
+  onChange,
+  onReset,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  defaultValue: number;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+  onReset: () => void;
+  disabled?: boolean;
+}) {
+  const isDefault = Math.abs(value - defaultValue) < 0.001;
+  return (
+    <div className={`space-y-1.5 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          onClick={onReset}
+          onDoubleClick={onReset}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          title="Click to reset to default"
+        >
+          {icon}
+          <span>{label}</span>
+        </button>
+        <span
+          className={`text-xs font-mono font-bold ${
+            isDefault ? "text-muted-foreground" : "text-xan-crimson"
+          }`}
+        >
+          {format(value)}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={step}
+        onValueChange={(arr) => onChange(arr[0])}
+        disabled={disabled}
+        className="w-full"
+      />
     </div>
   );
 }

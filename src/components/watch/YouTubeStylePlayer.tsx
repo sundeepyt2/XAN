@@ -58,8 +58,12 @@ import {
   Shield,
   Cloud,
   X,
+  Wand2,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
+import { VideoEnhancerPanel } from "./VideoEnhancerPanel";
+import { VideoEnhancerFilters } from "./VideoEnhancerFilters";
+import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
 
 interface YouTubeStylePlayerProps {
   streamUrl: string;
@@ -289,7 +293,7 @@ function formatRemaining(s: number): string {
   return `-${formatTime(s)}`;
 }
 
-type SettingsTab = "main" | "speed" | "quality";
+type SettingsTab = "main" | "speed" | "quality" | "enhancer";
 type TimeMode = "duration" | "remaining";
 type SeekFeedback = { id: number; delta: number };
 type TapRipple = { id: number; side: "left" | "right" };
@@ -356,6 +360,9 @@ export function YouTubeStylePlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [hlsLevels, setHlsLevels] = useState<HlsLevelInfo[]>([]);
   const [currentLevel, setCurrentLevel] = useState<number>(-1); // -1 = Auto (ABR)
+
+  // ✅ Video Enhancer — persistent CSS/SVG color grading for the <video> element.
+  const enhancer = useVideoEnhancer();
 
   // ✅ Bandwidth load mode — tracks which tier is currently active.
   // Visible in the UI as a "Direct" (green) or "Proxied" (amber) badge.
@@ -998,6 +1005,13 @@ export function YouTubeStylePlayer({
           e.preventDefault();
           togglePip();
           break;
+        case "e":
+        case "E":
+          e.preventDefault();
+          enhancer.toggleEnabled();
+          showControls();
+          scheduleHide();
+          break;
         case "t":
         case "T":
           e.preventDefault();
@@ -1040,6 +1054,7 @@ export function YouTubeStylePlayer({
     playbackRate,
     showControls,
     scheduleHide,
+    enhancer.toggleEnabled,
   ]);
 
   // ──────────────────────────────────────────────────────────────
@@ -1227,9 +1242,12 @@ export function YouTubeStylePlayer({
         ref={containerRef}
         className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border select-none"
       >
+        <VideoEnhancerFilters state={enhancer.rawState} />
+
         <iframe
           src={streamUrl}
           className="w-full h-full"
+          style={enhancer.active ? { filter: enhancer.filterCss } : undefined}
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope; web-share"
           allowFullScreen
           referrerPolicy="origin"
@@ -1248,7 +1266,7 @@ export function YouTubeStylePlayer({
           </div>
         )}
         {/* Top gradient with title + source badge — minimal UI for iframe mode */}
-        <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none">
+        <div className="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-white font-semibold text-sm md:text-base truncate drop-shadow">
@@ -1272,9 +1290,65 @@ export function YouTubeStylePlayer({
                 <Zap className="h-2.5 w-2.5" />
                 DIRECT
               </span>
+              <button
+                data-settings-button
+                onClick={() => {
+                  setShowSettings((v) => {
+                    if (v && settingsTab === "enhancer") return false;
+                    return true;
+                  });
+                  setSettingsTab("enhancer");
+                }}
+                className={`relative p-1.5 rounded-md hover:bg-white/15 active:bg-white/25 transition-colors pointer-events-auto ${
+                  showSettings && settingsTab === "enhancer" ? "bg-white/15" : ""
+                }`}
+                aria-label="Video Enhancer"
+                title="Video Enhancer (E)"
+              >
+                <Wand2 className="h-4 w-4 text-white" />
+                {enhancer.active && (
+                  <span
+                    className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-xan-crimson shadow-[0_0_4px_rgba(233,69,96,0.9)]"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
             </div>
           </div>
         </div>
+
+        {showSettings && settingsTab === "enhancer" && (
+          <div
+            data-settings-panel
+            className="absolute bottom-0 left-0 right-0 max-h-[50vh] text-[12px] sm:top-14 sm:bottom-auto sm:left-auto sm:right-3 sm:w-80 sm:max-h-[75vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <VideoEnhancerPanel
+              standalone
+              state={enhancer.state}
+              active={enhancer.active}
+              peeking={enhancer.peeking}
+              onBack={() => {
+                setShowSettings(false);
+                setSettingsTab("main");
+              }}
+              onClose={closeSettings}
+              onUpdate={enhancer.update}
+              onApplyPreset={enhancer.applyPreset}
+              onReset={enhancer.reset}
+              onToggleEnabled={enhancer.toggleEnabled}
+              onPeekStart={enhancer.peekStart}
+              onPeekEnd={enhancer.peekEnd}
+              customPresets={enhancer.customPresets}
+              canSaveMoreCustom={enhancer.canSaveMoreCustom}
+              onSaveCustomPreset={enhancer.saveCustomPreset}
+              onApplyCustomPreset={enhancer.applyCustomPreset}
+              onDeleteCustomPreset={enhancer.deleteCustomPreset}
+              onRenameCustomPreset={enhancer.renameCustomPreset}
+            />
+          </div>
+        )}
       </div>
     );
   }
@@ -1286,10 +1360,13 @@ export function YouTubeStylePlayer({
       onMouseMove={onContainerMouseMove}
       onMouseLeave={onContainerMouseLeave}
     >
+      <VideoEnhancerFilters state={enhancer.rawState} />
+
       <video
         ref={videoRef}
         poster={posterUrl}
         className="w-full h-full object-contain"
+        style={enhancer.active ? { filter: enhancer.filterCss } : undefined}
         playsInline
         onClick={onVideoClick}
         onDoubleClick={onVideoDoubleClick}
@@ -1334,7 +1411,7 @@ export function YouTubeStylePlayer({
 
       {/* ── Top gradient with title ── */}
       <div
-        className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 xan-controls ${controlsHidden ? "xan-controls--hidden" : ""}`}
+        className={`absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 xan-controls ${controlsHidden ? "xan-controls--hidden" : ""}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -1385,6 +1462,29 @@ export function YouTubeStylePlayer({
                 PROXIED
               </span>
             )}
+            <button
+              data-settings-button
+              onClick={() => {
+                setShowSettings((v) => {
+                  if (v && settingsTab === "enhancer") return false;
+                  return true;
+                });
+                setSettingsTab("enhancer");
+              }}
+              className={`relative p-1.5 rounded-md hover:bg-white/15 transition-colors ${
+                showSettings && settingsTab === "enhancer" ? "bg-white/15" : ""
+              }`}
+              aria-label="Video Enhancer"
+              title="Video Enhancer (E)"
+            >
+              <Wand2 className="h-4 w-4 text-white" />
+              {enhancer.active && (
+                <span
+                  className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-xan-crimson shadow-[0_0_4px_rgba(233,69,96,0.9)]"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
             <button
               onClick={() => setShowShortcuts(true)}
               className="p-1.5 rounded-md text-white hover:bg-white/15 transition-colors"
@@ -1616,7 +1716,7 @@ export function YouTubeStylePlayer({
           container has `overflow-hidden` (for rounded corners) — positioning
           outside (e.g. bottom-full) would clip the panel entirely, making it
           invisible on desktop AND in fullscreen mode. */}
-      {showSettings && (
+      {showSettings && settingsTab !== "enhancer" && (
         <div
           data-settings-panel
           className="absolute bottom-0 left-0 right-0 max-h-[36vh] text-[12px] sm:bottom-14 sm:left-auto sm:right-3 sm:w-64 sm:max-h-[60vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
@@ -1793,6 +1893,36 @@ export function YouTubeStylePlayer({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {showSettings && settingsTab === "enhancer" && (
+        <div
+          data-settings-panel
+          className="absolute bottom-0 left-0 right-0 max-h-[50vh] text-[12px] sm:top-14 sm:bottom-auto sm:left-auto sm:right-3 sm:w-80 sm:max-h-[75vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <VideoEnhancerPanel
+            standalone
+            state={enhancer.state}
+            active={enhancer.active}
+            peeking={enhancer.peeking}
+            onBack={closeSettings}
+            onClose={closeSettings}
+            onUpdate={enhancer.update}
+            onApplyPreset={enhancer.applyPreset}
+            onReset={enhancer.reset}
+            onToggleEnabled={enhancer.toggleEnabled}
+            onPeekStart={enhancer.peekStart}
+            onPeekEnd={enhancer.peekEnd}
+            customPresets={enhancer.customPresets}
+            canSaveMoreCustom={enhancer.canSaveMoreCustom}
+            onSaveCustomPreset={enhancer.saveCustomPreset}
+            onApplyCustomPreset={enhancer.applyCustomPreset}
+            onDeleteCustomPreset={enhancer.deleteCustomPreset}
+            onRenameCustomPreset={enhancer.renameCustomPreset}
+          />
         </div>
       )}
 
