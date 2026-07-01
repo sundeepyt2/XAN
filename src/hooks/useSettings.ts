@@ -58,6 +58,15 @@ export interface Settings {
   disabledSources: string[];
 
   /**
+   * Pinned source name — when set, ONLY this source is loaded in the watch
+   * page, regardless of disabledSources or provider priority. Even if the
+   * pinned source fails to stream, no fallback to other sources occurs.
+   * Set to null to disable pinning (normal behavior).
+   * Uses sourceName field (e.g. "S-mp4", "Uni", "Koto").
+   */
+  pinnedSource: string | null;
+
+  /**
    * Provider priority order — which provider's sources to try first.
    * Array of provider IDs in priority order (highest first).
    * The player auto-picks the highest-priority provider's best source.
@@ -89,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bandwidthMode: "auto",
   showSourceSwitcher: true,
   disabledSources: [],
+  pinnedSource: null,
   providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
   hideAdult: true,
   hideSpoilers: false,

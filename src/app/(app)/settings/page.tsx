@@ -127,13 +127,31 @@ const SORT_OPTIONS: { value: Settings["defaultSort"]; label: string }[] = [
 
 // ✅ Known source names — used in the Source filters section.
 // These are the sourceName values that appear in the stream API response.
+// ✅ Bug fix: added ALL AllAnime source names (S-mp4, Default, Sak, Wixmp,
+// Luf-Mp4, Fm-hls, Vn-hls, Viz, Mycloud, allanime-clock) — previously these
+// were missing, so users couldn't toggle them off in the settings page.
 const KNOWN_SOURCES: { name: string; type: "mp4" | "hls" | "iframe"; desc: string }[] = [
   { name: "Yt-mp4", type: "mp4", desc: "AllAnime — tools.fast4speed.rsvp. Blocks CF, uses Vercel proxy." },
+  { name: "S-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream. May contain multiple quality URLs." },
+  { name: "Sl-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (Sl variant). Internal stream resolution." },
+  { name: "S1-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S1 variant). Internal stream resolution." },
+  { name: "S2-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S2 variant). Internal stream resolution." },
+  { name: "S3-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S3 variant). Internal stream resolution." },
+  { name: "Ss-Hls", type: "hls", desc: "AllAnime — clock.json HLS stream. Internal stream resolution." },
   { name: "Mp4", type: "mp4", desc: "AllAnime — mp4upload.com. Download page, may not play directly." },
+  { name: "Ak", type: "mp4", desc: "AllAnime — Ak stream. May work through CF Worker." },
+  { name: "Default", type: "mp4", desc: "AllAnime — default clock.json source. Internal stream resolution." },
+  { name: "Sak", type: "mp4", desc: "AllAnime — Sak clock.json source. Internal stream resolution." },
+  { name: "Wixmp", type: "mp4", desc: "AllAnime — Wixmp clock.json source. Internal stream resolution." },
+  { name: "Luf-Mp4", type: "mp4", desc: "AllAnime — Luf-Mp4 clock.json source. Internal stream resolution." },
+  { name: "Fm-hls", type: "hls", desc: "AllAnime — FileMoon HLS stream. Scrape-based extraction." },
+  { name: "Vn-hls", type: "hls", desc: "AllAnime — VidNest HLS stream. Scrape-based extraction." },
+  { name: "Viz", type: "mp4", desc: "AllAnime — Viz stream. Scrape-based extraction." },
+  { name: "Mycloud", type: "mp4", desc: "AllAnime — MyCloud stream. Scrape-based extraction." },
+  { name: "allanime-clock", type: "mp4", desc: "AllAnime — internal clock.json result. Auto-generated name." },
   { name: "Sw", type: "iframe", desc: "AllAnime — StreamWish embed. 0 Vercel BW (iframe)." },
   { name: "Ok", type: "iframe", desc: "AllAnime — Ok.ru embed. 0 Vercel BW (iframe)." },
   { name: "Uni", type: "iframe", desc: "AllAnime — Uni embed (allanime.uns.bio). 0 Vercel BW." },
-  { name: "Ak", type: "mp4", desc: "AllAnime — Ak stream. May work through CF Worker." },
   { name: "Zen", type: "iframe", desc: "FlixCloud embed. Often blocked by Cloudflare." },
   { name: "Koto", type: "iframe", desc: "MegaPlay embed. 0 Vercel BW (iframe)." },
   { name: "Pahe-Kiwi-Stream", type: "iframe", desc: "AnimePahe — download page (iframe). Shows download button." },
@@ -797,26 +815,69 @@ export default function SettingsPage() {
                   </Label>
                   <p className="text-xs text-muted-foreground">
                     Toggle individual stream sources on or off. Disabled sources are
-                    hidden from the Servers panel and never auto-selected. Useful for
-                    hiding sources that never work for you (e.g. ones that always fall
-                    back to Vercel proxy).
+                    hidden from the Servers panel and never auto-selected.{" "}
+                    <span className="text-xan-crimson font-medium">Click the dot (●)</span> next to a source to pin it — only that source will load, even if it fails (no fallback).
                   </p>
                 </div>
               </div>
 
-              {/* Known source names with toggles */}
+              {/* Known source names with toggles + pin dots */}
               <div className="space-y-1.5">
+                {/* ✅ Pin indicator — shows when a source is pinned */}
+                {settings.pinnedSource && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-xan-crimson/10 border border-xan-crimson/30 text-xs">
+                    <span className="w-2 h-2 rounded-full bg-xan-crimson animate-pulse flex-shrink-0" />
+                    <span className="text-xan-crimson font-medium">
+                      Pinned: <span className="font-mono">{settings.pinnedSource}</span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      — only this source will load, no fallback
+                    </span>
+                    <button
+                      onClick={() => update("pinnedSource", null)}
+                      className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
+                    >
+                      Unpin
+                    </button>
+                  </div>
+                )}
                 {KNOWN_SOURCES.map((source) => {
                   const isEnabled = !settings.disabledSources.includes(source.name);
+                  const isPinned = settings.pinnedSource === source.name;
                   return (
                     <div
                       key={source.name}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors ${
-                        isEnabled
-                          ? "bg-xan-card/60 border-xan-border"
-                          : "bg-red-500/5 border-red-500/20"
+                        isPinned
+                          ? "bg-xan-crimson/10 border-xan-crimson/40"
+                          : isEnabled
+                            ? "bg-xan-card/60 border-xan-border"
+                            : "bg-red-500/5 border-red-500/20"
                       }`}
                     >
+                      {/* ✅ Pin dot button — when active, ONLY this source loads */}
+                      <button
+                        onClick={() => {
+                          if (isPinned) {
+                            // Already pinned → unpin
+                            update("pinnedSource", null);
+                          } else {
+                            // Pin this source (unpins any previously pinned)
+                            update("pinnedSource", source.name);
+                          }
+                        }}
+                        className={`flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all flex items-center justify-center ${
+                          isPinned
+                            ? "bg-xan-crimson border-xan-crimson shadow-[0_0_6px_rgba(233,69,96,0.6)]"
+                            : "bg-transparent border-muted-foreground/40 hover:border-foreground"
+                        }`}
+                        aria-label={isPinned ? `Unpin ${source.name}` : `Pin ${source.name} (only load this source)`}
+                        title={isPinned ? "Pinned — click to unpin" : "Pin: only this source will load (no fallback)"}
+                      >
+                        {isPinned && (
+                          <span className="w-2 h-2 rounded-full bg-white" />
+                        )}
+                      </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground font-mono">
@@ -829,6 +890,11 @@ export default function SettingsPage() {
                           }`}>
                             {source.type}
                           </span>
+                          {isPinned && (
+                            <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-xan-crimson/25 text-xan-crimson border border-xan-crimson/30">
+                              PINNED
+                            </span>
+                          )}
                         </div>
                         <p className="text-[10px] text-muted-foreground mt-0.5">
                           {source.desc}
@@ -850,6 +916,65 @@ export default function SettingsPage() {
                   );
                 })}
               </div>
+
+              {/* ✅ Dynamic sources — any source names in disabledSources that
+                  aren't in KNOWN_SOURCES. These are previously-disabled sources
+                  whose names weren't in the hardcoded list. Users can re-enable
+                  them here so they don't get stuck with a hidden disabled source. */}
+              {(() => {
+                const knownNames = KNOWN_SOURCES.map((s) => s.name);
+                const unknownDisabled = settings.disabledSources.filter(
+                  (n) => !knownNames.includes(n),
+                );
+                if (unknownDisabled.length === 0) return null;
+                return (
+                  <div className="space-y-1.5 pt-2">
+                    <p className="text-[10px] text-muted-foreground/60 italic">
+                      Other disabled sources (not in the known list):
+                    </p>
+                    {unknownDisabled.map((name) => {
+                      const isPinned = settings.pinnedSource === name;
+                      return (
+                        <div
+                          key={name}
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${
+                            isPinned
+                              ? "bg-xan-crimson/10 border-xan-crimson/40"
+                              : "bg-red-500/5 border-red-500/20"
+                          }`}
+                        >
+                          {/* Pin dot */}
+                          <button
+                            onClick={() => {
+                              update("pinnedSource", isPinned ? null : name);
+                            }}
+                            className={`flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all flex items-center justify-center ${
+                              isPinned
+                                ? "bg-xan-crimson border-xan-crimson shadow-[0_0_6px_rgba(233,69,96,0.6)]"
+                                : "bg-transparent border-muted-foreground/40 hover:border-foreground"
+                            }`}
+                            aria-label={isPinned ? `Unpin ${name}` : `Pin ${name}`}
+                            title={isPinned ? "Pinned — click to unpin" : "Pin: only this source will load"}
+                          >
+                            {isPinned && <span className="w-2 h-2 rounded-full bg-white" />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-foreground font-mono">
+                              {name}
+                            </span>
+                          </div>
+                          <Switch
+                            checked={false}
+                            onCheckedChange={() => {
+                              update("disabledSources", settings.disabledSources.filter((n) => n !== name));
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Reset button */}
               <Button

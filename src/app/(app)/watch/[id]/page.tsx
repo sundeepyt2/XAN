@@ -281,6 +281,27 @@ function WatchPageInner({ params }: PageProps) {
     setShowAutoPlay(true);
   }, []);
 
+  // ✅ Memoized callbacks for VideoPlayer — prevents unnecessary re-renders.
+  // Previously these were inline arrow functions, which created a new function
+  // reference on every render. This caused the VideoPlayer's useEffect that
+  // depends on onSourcesLoaded to fire on EVERY render, potentially passing
+  // stale data or causing infinite update loops.
+  const handleSourcesLoaded = useCallback(
+    (s: typeof sources, recIdx: number) => {
+      setSources(s);
+      setRecommendedIdx(recIdx);
+    },
+    [],
+  );
+
+  const handleSourceChange = useCallback(
+    (idx: number, failed: Set<number>) => {
+      setCurrentSourceIdx(idx);
+      setFailedSourceIdxs(failed);
+    },
+    [],
+  );
+
   const handlePlayNext = useCallback(() => {
     if (!anime) return;
     const total = anime.episodes ?? 12;
@@ -480,14 +501,8 @@ function WatchPageInner({ params }: PageProps) {
               onProgress={handleProgress}
               mode={mode}
               onFallbackToSub={handleFallbackToSub}
-              onSourcesLoaded={(s, recIdx) => {
-                setSources(s);
-                setRecommendedIdx(recIdx);
-              }}
-              onSourceChange={(idx, failed) => {
-                setCurrentSourceIdx(idx);
-                setFailedSourceIdxs(failed);
-              }}
+              onSourcesLoaded={handleSourcesLoaded}
+              onSourceChange={handleSourceChange}
               selectSourceRef={selectSourceRef}
             />
             {showAutoPlay && nextEp && (

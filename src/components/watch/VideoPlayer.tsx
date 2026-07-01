@@ -72,7 +72,7 @@ export function VideoPlayer({
   selectSourceRef,
 }: VideoPlayerProps) {
   // ✅ Read settings FIRST — needed by useMemo for disabledSources filtering
-  const { settings } = useSettings();
+  const { settings, isLoaded: settingsLoaded } = useSettings();
   const { logTierResult } = useBandwidthStats();
 
   const [stream, setStream] = useState<StreamData | null>(null);
@@ -82,11 +82,22 @@ export function VideoPlayer({
   const [allSourcesRaw, setAllSourcesRaw] = useState<StreamData[]>([]);
   // ✅ Derived filtered list — disabled sources removed.
   // Recomputes whenever the raw list or disabledSources changes.
+  // ✅ Pin support: if settings.pinnedSource is set, ONLY that source is
+  // used (overriding the disabled filter). Even if the pinned source is
+  // disabled in the toggle, it still loads because the pin takes priority.
+  // Even if the pinned source fails to stream, no fallback to other sources.
   const allSources = useMemo(() => {
+    const pinned = settings.pinnedSource;
+    if (pinned) {
+      // ✅ Pin mode — filter to ONLY sources matching the pinned name.
+      // This overrides disabledSources — the pinned source loads even if
+      // it's toggled off. No fallback to other sources if it fails.
+      return allSourcesRaw.filter((s) => s.sourceName === pinned);
+    }
     const disabled = settings.disabledSources;
     if (disabled.length === 0) return allSourcesRaw;
     return allSourcesRaw.filter((s) => !disabled.includes(s.sourceName ?? ""));
-  }, [allSourcesRaw, settings.disabledSources]);
+  }, [allSourcesRaw, settings.disabledSources, settings.pinnedSource]);
   // ✅ Which source index we're currently trying (advances on tier failure)
   const [sourceIdx, setSourceIdx] = useState(0);
   // ✅ Set of source indices that have failed all tiers — shown as ❌ in UI
@@ -120,6 +131,16 @@ export function VideoPlayer({
   useEffect(() => {
     onFallbackToSubRef.current = onFallbackToSub;
   });
+
+  // ✅ Bug fix: ref for settings so the fetch handler always reads the LATEST
+  // pinnedSource + disabledSources — even if settings hydrated from localStorage
+  // AFTER the fetch effect was created. Without this, the fetch handler would
+  // use stale DEFAULT_SETTINGS (pinnedSource: null) on the first render, picking
+  // the wrong source (e.g., Ok.ru instead of pinned Koto).
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // ✅ Throttle progress reporting — max 1 write per 5 seconds.
   const lastProgressWriteRef = useRef(0);
@@ -158,6 +179,22 @@ export function VideoPlayer({
       if (allSources[0]) setStream(allSources[0]);
     }
   }, [allSources, sourceIdx]);
+
+  // ✅ Pin support: when pinnedSource changes (or allSources recomputes due to
+  // pin change), re-select the stream to match the pin filter. Without this,
+  // the player would keep playing the old source even after pinning a different
+  // one — the user would have to reload the page to see the pin take effect.
+  useEffect(() => {
+    if (allSources.length === 0) return;
+    const currentStream = allSources[sourceIdx];
+    // If the current stream is NOT in the filtered list (e.g. pin changed and
+    // the old source is no longer included), switch to the first available.
+    if (!currentStream) {
+      setSourceIdx(0);
+      setStream(allSources[0]);
+      setFailedSources(new Set());
+    }
+  }, [allSources, sourceIdx, settings.pinnedSource]);
 
   // ✅ Manual source selection — exposed to parent via selectSourceRef
   // idx is an index into the FILTERED allSources list (what SourceSwitcher renders)
@@ -211,7 +248,9 @@ export function VideoPlayer({
       // ✅ Multi-source fallback: if all tiers failed for this source, find
       // the next non-failed source. Cycles through ALL sources (not just
       // forward) so sources before the current index get tried too.
-      if (tier === "failed") {
+      // ✅ Pin mode: if settings.pinnedSource is set, do NOT fallback — the
+      // user explicitly wants ONLY this source, even if it fails.
+      if (tier === "failed" && !settings.pinnedSource) {
         // Mark this source as failed
         setFailedSources((prev) => {
           const next = new Set(prev);
@@ -297,7 +336,11 @@ export function VideoPlayer({
             quality: s.quality ?? null,
             headers: s.headers,
             sourceName: s.sourceName,
-            provider: json?.provider,
+            // ✅ Bug fix: use the primary stream's OWN provider field (s.provider),
+            // NOT the top-level json.provider (which is the picked source's
+            // provider — could be wrong for non-primary sources). Each source
+            // in the API response has its own provider field.
+            provider: s.provider ?? json?.provider,
           };
           // ✅ Build the full sources list from the API response.
           const sources: StreamData[] = [primaryStream];
@@ -310,7 +353,11 @@ export function VideoPlayer({
                   quality: src.quality ?? null,
                   headers: src.headers,
                   sourceName: src.sourceName,
-                  provider: json?.provider,
+                  // ✅ Bug fix: use each source's OWN provider field, not the
+                  // top-level json.provider. This ensures Koto sources have
+                  // provider="koto", Zen sources have provider="zen", etc.
+                  // so the provider priority sort works correctly.
+                  provider: src.provider ?? json?.provider,
                 });
               }
             }
@@ -318,7 +365,10 @@ export function VideoPlayer({
           // ✅ Sort ALL sources by provider priority (from settings) + bandwidth score.
           // Don't filter disabled sources here — the useMemo (allSources) handles that.
           // allSourcesRaw holds the full list so re-enabling a source works without re-fetch.
-          const priority = settings.providerPriority;
+          // ✅ Bug fix: read from settingsRef.current (always latest) instead of the
+          // stale `settings` captured when the effect was created.
+          const currentSettings = settingsRef.current;
+          const priority = currentSettings.providerPriority;
           const sortedSources = [...sources].sort((a, b) => {
             const aPriority = priority.indexOf(a.provider ?? "allanime");
             const bPriority = priority.indexOf(b.provider ?? "allanime");
@@ -332,13 +382,27 @@ export function VideoPlayer({
 
           // ✅ The filtered list (allSources) is derived by useMemo. Auto-pick the first one.
           // We compute it inline here to avoid a race condition with useMemo.
-          const disabled = settings.disabledSources;
-          const enabled = disabled.length > 0
-            ? sortedSources.filter((s) => !disabled.includes(s.sourceName ?? ""))
-            : sortedSources;
+          // ✅ Bug fix: respect pinnedSource — if set, ONLY the pinned source
+          // is used (overrides disabledSources). Uses settingsRef.current for
+          // the latest value (avoids stale DEFAULT_SETTINGS on first render).
+          const pinned = currentSettings.pinnedSource;
+          let enabled: StreamData[];
+          if (pinned) {
+            // Pin mode — only sources matching the pinned name
+            enabled = sortedSources.filter((s) => s.sourceName === pinned);
+          } else {
+            const disabled = currentSettings.disabledSources;
+            enabled = disabled.length > 0
+              ? sortedSources.filter((s) => !disabled.includes(s.sourceName ?? ""))
+              : sortedSources;
+          }
 
           if (enabled.length === 0) {
-            setError("All sources are disabled. Enable some sources in Settings → Bandwidth → Source filters.");
+            setError(
+              pinned
+                ? `Pinned source "${pinned}" is not available for this episode. Unpin it or try another source.`
+                : "All sources are disabled. Enable some sources in Settings → Bandwidth → Source filters."
+            );
             setLoading(false);
             return;
           }
@@ -363,7 +427,7 @@ export function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [animeId, malId, episode, animeTitle, mode, retryNonce]);
+  }, [animeId, malId, episode, animeTitle, mode, retryNonce, settingsLoaded]);
 
   if (error) {
     // ✅ If we have failed sources, show the "Tried: ..." message (xancld.xyz style)

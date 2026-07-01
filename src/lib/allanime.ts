@@ -577,11 +577,27 @@ export async function extractSource(
     name.includes("wixmp") ||
     name.includes("luf-mp4") ||
     name.includes("s-mp4") ||
+    name.includes("sl-mp4") ||
+    name.includes("ss-hls") ||
+    name.includes("s1-mp4") ||
+    name.includes("s2-mp4") ||
+    name.includes("s3-mp4") ||
     url.startsWith("/apivtwo/")
   ) {
     const clockResults = await fetchClockJson(url);
     if (clockResults.length > 0) {
-      return clockResults.map((r) => ({ ...r, sourceName }));
+      // ✅ Bug fix: Give each clock.json result a DISTINCT sourceName so the
+      // user can distinguish between multiple streams from the same source.
+      // Previously, ALL results got the same sourceName (e.g., "S-mp4"), which
+      // made the Servers panel show multiple identical-looking entries.
+      // Now: "S-mp4" for single results, "S-mp4 #1", "S-mp4 #2" for multiple.
+      if (clockResults.length === 1) {
+        return clockResults.map((r) => ({ ...r, sourceName }));
+      }
+      return clockResults.map((r, i) => ({
+        ...r,
+        sourceName: `${sourceName} #${i + 1}`,
+      }));
     }
     return null;
   }
@@ -678,7 +694,12 @@ export async function extractStreamUrl(
       n.includes("sak") ||
       n.includes("wixmp") ||
       n.includes("luf-mp4") ||
-      n.includes("s-mp4")
+      n.includes("s-mp4") ||
+      n.includes("sl-mp4") ||
+      n.includes("ss-hls") ||
+      n.includes("s1-mp4") ||
+      n.includes("s2-mp4") ||
+      n.includes("s3-mp4")
     )
       return 500 + declaredPriority;
     if (n === "mp4") return 300 + declaredPriority;
