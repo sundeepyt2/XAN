@@ -58,10 +58,10 @@ import {
   Shield,
   Cloud,
   X,
-  Wand2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
-import { VideoEnhancerPanel } from "./VideoEnhancerPanel";
 import { VideoEnhancerFilters } from "./VideoEnhancerFilters";
 import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
 
@@ -1290,65 +1290,37 @@ export function YouTubeStylePlayer({
                 <Zap className="h-2.5 w-2.5" />
                 DIRECT
               </span>
+              {/* ✅ Eye toggle — turns enhancer ON/OFF for the video.
+                  Eye icon when ON (crimson + glow), EyeOff icon when OFF (muted).
+                  Animated transition between states. Works on all devices. */}
               <button
-                data-settings-button
-                onClick={() => {
-                  setShowSettings((v) => {
-                    if (v && settingsTab === "enhancer") return false;
-                    return true;
-                  });
-                  setSettingsTab("enhancer");
-                }}
-                className={`relative p-1.5 rounded-md hover:bg-white/15 active:bg-white/25 transition-colors pointer-events-auto ${
-                  showSettings && settingsTab === "enhancer" ? "bg-white/15" : ""
-                }`}
-                aria-label="Video Enhancer"
-                title="Video Enhancer (E)"
+                onClick={() => enhancer.toggleEnabled()}
+                className="relative p-1.5 rounded-md hover:bg-white/15 active:bg-white/25 transition-colors pointer-events-auto flex items-center justify-center"
+                aria-label={enhancer.state.enabled ? "Turn enhancer off" : "Turn enhancer on"}
+                title={enhancer.state.enabled ? "Enhancer ON — click to turn off" : "Enhancer OFF — click to turn on"}
               >
-                <Wand2 className="h-4 w-4 text-white" />
-                {enhancer.active && (
-                  <span
-                    className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-xan-crimson shadow-[0_0_4px_rgba(233,69,96,0.9)]"
-                    aria-hidden="true"
+                <div className="relative w-4 h-4">
+                  {/* Eye (ON state) — fades + scales in when enabled */}
+                  <Eye
+                    className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                      enhancer.state.enabled
+                        ? "opacity-100 scale-100 rotate-0 text-xan-crimson drop-shadow-[0_0_3px_rgba(233,69,96,0.8)]"
+                        : "opacity-0 scale-50 rotate-90 text-white/40"
+                    }`}
                   />
-                )}
+                  {/* EyeOff (OFF state) — fades + scales in when disabled */}
+                  <EyeOff
+                    className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                      enhancer.state.enabled
+                        ? "opacity-0 scale-50 -rotate-90 text-white/40"
+                        : "opacity-100 scale-100 rotate-0 text-white/60"
+                    }`}
+                  />
+                </div>
               </button>
             </div>
           </div>
         </div>
-
-        {showSettings && settingsTab === "enhancer" && (
-          <div
-            data-settings-panel
-            className="absolute bottom-0 left-0 right-0 max-h-[50vh] text-[12px] sm:top-14 sm:bottom-auto sm:left-auto sm:right-3 sm:w-80 sm:max-h-[75vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <VideoEnhancerPanel
-              standalone
-              state={enhancer.state}
-              active={enhancer.active}
-              peeking={enhancer.peeking}
-              onBack={() => {
-                setShowSettings(false);
-                setSettingsTab("main");
-              }}
-              onClose={closeSettings}
-              onUpdate={enhancer.update}
-              onApplyPreset={enhancer.applyPreset}
-              onReset={enhancer.reset}
-              onToggleEnabled={enhancer.toggleEnabled}
-              onPeekStart={enhancer.peekStart}
-              onPeekEnd={enhancer.peekEnd}
-              customPresets={enhancer.customPresets}
-              canSaveMoreCustom={enhancer.canSaveMoreCustom}
-              onSaveCustomPreset={enhancer.saveCustomPreset}
-              onApplyCustomPreset={enhancer.applyCustomPreset}
-              onDeleteCustomPreset={enhancer.deleteCustomPreset}
-              onRenameCustomPreset={enhancer.renameCustomPreset}
-            />
-          </div>
-        )}
       </div>
     );
   }
@@ -1462,28 +1434,33 @@ export function YouTubeStylePlayer({
                 PROXIED
               </span>
             )}
+            {/* ✅ Eye toggle — turns enhancer ON/OFF for the video.
+                Eye icon when ON (crimson + glow), EyeOff icon when OFF (muted).
+                Animated transition between states. Works on all devices. */}
             <button
-              data-settings-button
-              onClick={() => {
-                setShowSettings((v) => {
-                  if (v && settingsTab === "enhancer") return false;
-                  return true;
-                });
-                setSettingsTab("enhancer");
-              }}
-              className={`relative p-1.5 rounded-md hover:bg-white/15 transition-colors ${
-                showSettings && settingsTab === "enhancer" ? "bg-white/15" : ""
-              }`}
-              aria-label="Video Enhancer"
-              title="Video Enhancer (E)"
+              onClick={() => enhancer.toggleEnabled()}
+              className="relative p-1.5 rounded-md hover:bg-white/15 active:bg-white/25 transition-colors flex items-center justify-center"
+              aria-label={enhancer.state.enabled ? "Turn enhancer off" : "Turn enhancer on"}
+              title={enhancer.state.enabled ? "Enhancer ON — click to turn off (E)" : "Enhancer OFF — click to turn on (E)"}
             >
-              <Wand2 className="h-4 w-4 text-white" />
-              {enhancer.active && (
-                <span
-                  className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-xan-crimson shadow-[0_0_4px_rgba(233,69,96,0.9)]"
-                  aria-hidden="true"
+              <div className="relative w-4 h-4">
+                {/* Eye (ON state) — fades + scales in when enabled */}
+                <Eye
+                  className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                    enhancer.state.enabled
+                      ? "opacity-100 scale-100 rotate-0 text-xan-crimson drop-shadow-[0_0_3px_rgba(233,69,96,0.8)]"
+                      : "opacity-0 scale-50 rotate-90 text-white/40"
+                  }`}
                 />
-              )}
+                {/* EyeOff (OFF state) — fades + scales in when disabled */}
+                <EyeOff
+                  className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                    enhancer.state.enabled
+                      ? "opacity-0 scale-50 -rotate-90 text-white/40"
+                      : "opacity-100 scale-100 rotate-0 text-white/60"
+                  }`}
+                />
+              </div>
             </button>
             <button
               onClick={() => setShowShortcuts(true)}
@@ -1893,36 +1870,6 @@ export function YouTubeStylePlayer({
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {showSettings && settingsTab === "enhancer" && (
-        <div
-          data-settings-panel
-          className="absolute bottom-0 left-0 right-0 max-h-[50vh] text-[12px] sm:top-14 sm:bottom-auto sm:left-auto sm:right-3 sm:w-80 sm:max-h-[75vh] sm:text-sm z-50 rounded-t-lg sm:rounded-lg bg-[#0f0f0f]/95 backdrop-blur border-t sm:border border-white/10 shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <VideoEnhancerPanel
-            standalone
-            state={enhancer.state}
-            active={enhancer.active}
-            peeking={enhancer.peeking}
-            onBack={closeSettings}
-            onClose={closeSettings}
-            onUpdate={enhancer.update}
-            onApplyPreset={enhancer.applyPreset}
-            onReset={enhancer.reset}
-            onToggleEnabled={enhancer.toggleEnabled}
-            onPeekStart={enhancer.peekStart}
-            onPeekEnd={enhancer.peekEnd}
-            customPresets={enhancer.customPresets}
-            canSaveMoreCustom={enhancer.canSaveMoreCustom}
-            onSaveCustomPreset={enhancer.saveCustomPreset}
-            onApplyCustomPreset={enhancer.applyCustomPreset}
-            onDeleteCustomPreset={enhancer.deleteCustomPreset}
-            onRenameCustomPreset={enhancer.renameCustomPreset}
-          />
         </div>
       )}
 

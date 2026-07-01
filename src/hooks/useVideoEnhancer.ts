@@ -182,6 +182,15 @@ const CUSTOM_PRESETS_KEY = "xan-video-enhancer-presets";
 export const MAX_CUSTOM_PRESETS = 10;
 
 /**
+ * Custom event name for cross-instance sync. When one useVideoEnhancer
+ * instance writes to localStorage, it dispatches this event so other
+ * instances (in other components) can re-read from localStorage and
+ * update their React state. This is needed because the `storage` event
+ * only fires across DIFFERENT tabs/windows, not within the same tab.
+ */
+const SYNC_EVENT = "xan-enhancer-sync";
+
+/**
  * A user-saved custom preset. The `values` field is the same shape as
  * EnhancerState minus `enabled` (we always force enabled=true on apply).
  */
@@ -209,6 +218,15 @@ function writeState(s: EnhancerState): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    // ✅ Defer the sync event dispatch to a microtask. writeState() is often
+    // called from inside a setState updater (which runs during render), and
+    // dispatching the event synchronously would trigger other instances'
+    // listeners to setState during THIS component's render — which React
+    // forbids. Deferring to a microtask ensures the dispatch happens after
+    // the current render completes.
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent(SYNC_EVENT));
+    });
   } catch {
     // localStorage not available — silently ignore
   }
@@ -241,6 +259,11 @@ function writeCustomPresets(presets: CustomPreset[]): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(presets.slice(0, MAX_CUSTOM_PRESETS)));
+    // ✅ Defer sync event dispatch (same reason as writeState — avoid
+    // setState-during-render warnings).
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent(SYNC_EVENT));
+    });
   } catch {
     // localStorage not available — silently ignore
   }
@@ -297,7 +320,8 @@ export function buildEnhancerFilterCss(s: EnhancerState): string {
 
   // ✅ Only chain the SVG filter when gamma or sharpen is non-default.
   // Identity SVG filter passes are wasteful (extra rasterization pass).
-  if (s.gamma !== 1.0 || s.sharpen !== 0) {
+  // ✅ Bug fix: use epsilon comparison for gamma (consistent with isEnhancerActive).
+  if (Math.abs(s.gamma - 1.0) > 0.001 || s.sharpen !== 0) {
     parts.push("url(#xan-enhancer)");
   }
 
@@ -307,11 +331,45 @@ export function buildEnhancerFilterCss(s: EnhancerState): string {
 export function useVideoEnhancer() {
   const [state, setState] = useState<EnhancerState>(DEFAULT_ENHANCER);
   const [isLoaded, setIsLoaded] = useState(false);
+  // ✅ Custom presets state declared early so the sync effect can use it.
+  const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
 
   // Hydrate from localStorage on mount (SSR-safe)
   useEffect(() => {
     setState(readState());
     setIsLoaded(true);
+  }, []);
+
+  // ✅ Cross-instance sync: when another useVideoEnhancer instance writes
+  // to localStorage (via writeState/writeCustomPresets), it dispatches a
+  // SYNC_EVENT. This listener re-reads from localStorage so THIS instance
+  // stays in sync. Without this, the watch-page popover and the player's
+  // internal hook would have stale state (the player wouldn't see changes
+  // made in the popover, and vice versa).
+  //
+  // ✅ Bug fix: The SYNC_EVENT is dispatched synchronously inside writeState(),
+  // which may be called during another component's render phase (e.g. the
+  // settings page slider calls enhancer.update() during render). React forbids
+  // calling setState() in component A while rendering component B. To avoid the
+  // "Cannot update a component while rendering a different component" warning,
+  // we defer the setState calls to the next microtask via queueMicrotask().
+  useEffect(() => {
+    const handler = () => {
+      // ✅ Defer to next microtask so we never setState during another
+      // component's render phase.
+      queueMicrotask(() => {
+        setState(readState());
+        setCustomPresets(readCustomPresets());
+      });
+    };
+    window.addEventListener(SYNC_EVENT, handler);
+    // Also listen for the native `storage` event (fires when OTHER tabs
+    // change localStorage — not same-tab, but good for cross-tab sync).
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener(SYNC_EVENT, handler);
+      window.removeEventListener("storage", handler);
+    };
   }, []);
 
   const update = useCallback(<K extends keyof EnhancerState>(key: K, value: EnhancerState[K]) => {
@@ -365,18 +423,20 @@ export function useVideoEnhancer() {
     setPeeking(false);
   }, []);
 
-  // ✅ Safety: if the enhancer gets turned off while peeking, clear peeking
-  // so the next time it's turned on, we don't start in a peeking state.
-  useEffect(() => {
-    if (!isEnhancerActive(state)) {
-      setPeeking(false);
-    }
-  }, [state]);
-
   // ✅ Derived: the active CSS filter string (memoized so <video> doesn't
   // re-render unless the value actually changes).
+  // ✅ Declared BEFORE the safety effect below (which depends on `active`).
   const filterCss = useMemo(() => buildEnhancerFilterCss(state), [state]);
   const active = useMemo(() => isEnhancerActive(state), [state]);
+
+  // ✅ Safety: if the enhancer gets turned off while peeking, clear peeking
+  // so the next time it's turned on, we don't start in a peeking state.
+  // ✅ Depends on `active` (not `state`) to avoid running on every state change.
+  useEffect(() => {
+    if (!active) {
+      setPeeking(false);
+    }
+  }, [active]);
 
   // ✅ effectiveFilterCss is what the <video>/<iframe> actually gets.
   // When peeking, we suppress the filter entirely (show original).
@@ -386,8 +446,8 @@ export function useVideoEnhancer() {
 
   // ──────────────────────────────────────────────────────────────
   // Custom presets (user-saved, max 10, stored in separate localStorage key)
+  // State declaration is above (near isLoaded) so the sync effect can use it.
   // ──────────────────────────────────────────────────────────────
-  const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
 
   // Hydrate custom presets from localStorage on mount (SSR-safe)
   useEffect(() => {

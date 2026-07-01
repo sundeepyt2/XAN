@@ -31,7 +31,10 @@ import {
 } from "@/components/ui/select";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
 import { useSettings } from "@/hooks/useSettings";
-import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay } from "lucide-react";
+import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
+import { VideoEnhancerPanel } from "@/components/watch/VideoEnhancerPanel";
+import { VideoEnhancerFilters } from "@/components/watch/VideoEnhancerFilters";
+import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay, Wand2 } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -92,6 +95,11 @@ function WatchPageInner({ params }: PageProps) {
 
   // ✅ Read user settings — controls provider priority, source switcher, etc.
   const { settings } = useSettings();
+
+  // ✅ Video Enhancer — state shared with the player (same localStorage key).
+  // The wand button lives OUTSIDE the player, next to the Provider dropdown.
+  const enhancer = useVideoEnhancer();
+  const [showEnhancer, setShowEnhancer] = useState(false);
 
   // ✅ Compute available providers from the sources list (for the provider dropdown)
   const availableProviders = useMemo(() => {
@@ -365,31 +373,98 @@ function WatchPageInner({ params }: PageProps) {
               fellBackToSub={fellBackToSub}
             />
 
-            {/* ✅ Provider switcher dropdown — quick switch between AllAnime/Zen/Koto/AnimePahe */}
-            {availableProviders.length > 0 && (
-              <div className="flex items-center gap-2">
-                <MonitorPlay className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Provider:</span>
-                <Select
-                  value={currentProvider}
-                  onValueChange={handleProviderSwitch}
+            {/* ✅ Provider switcher dropdown + Video Enhancer wand button —
+                both live above the player, outside of it. The wand opens a
+                standalone enhancer popover (no longer inside the player). */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {availableProviders.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <MonitorPlay className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground hidden sm:inline">Provider:</span>
+                  <Select
+                    value={currentProvider}
+                    onValueChange={handleProviderSwitch}
+                  >
+                    <SelectTrigger className="w-36 bg-xan-card border-xan-border text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableProviders.map((p, idx) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <span className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground font-mono">{idx + 1}</span>
+                            {p.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* ✅ Video Enhancer wand button — opens a standalone popover.
+                  Crimson dot shows when enhancer is active. */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowEnhancer((v) => !v)}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-all ${
+                    enhancer.active
+                      ? "bg-xan-crimson/15 border-xan-crimson/40 text-xan-crimson"
+                      : showEnhancer
+                        ? "bg-xan-card border-xan-border text-foreground"
+                        : "bg-xan-card border-xan-border text-muted-foreground hover:text-foreground hover:bg-xan-card-hover"
+                  }`}
+                  aria-label="Video Enhancer"
+                  title="Video Enhancer (E)"
                 >
-                  <SelectTrigger className="w-36 bg-xan-card border-xan-border text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableProviders.map((p, idx) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        <span className="flex items-center gap-2">
-                          <span className="text-[10px] text-muted-foreground font-mono">{idx + 1}</span>
-                          {p.label}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Wand2 className="h-3.5 w-3.5" />
+                  <span>Enhancer</span>
+                  {enhancer.active && (
+                    <span
+                      className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-xan-crimson shadow-[0_0_4px_rgba(233,69,96,0.9)]"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+
+                {/* ✅ Enhancer popover — anchored below the wand button.
+                    Click outside to close (handled by the backdrop). */}
+                {showEnhancer && (
+                  <>
+                    {/* Backdrop — closes popover on click */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowEnhancer(false)}
+                    />
+                    {/* Popover — responsive:
+                        Mobile: fixed bottom sheet, full-width, max 85vh
+                        Desktop: absolute, right-anchored below the button, 320px wide */}
+                    <div className="fixed bottom-0 left-0 right-0 max-h-[85vh] z-50 rounded-t-xl border-t border-xan-border bg-[#0f0f0f]/95 backdrop-blur shadow-2xl text-white overflow-y-auto overflow-x-hidden animate-in fade-in duration-200 sm:absolute sm:bottom-auto sm:top-full sm:right-0 sm:left-auto sm:mt-2 sm:w-80 sm:max-h-[80vh] sm:rounded-lg sm:border-t-0 sm:border sm:zoom-in-95">
+                      <VideoEnhancerPanel
+                        standalone
+                        state={enhancer.state}
+                        active={enhancer.active}
+                        peeking={enhancer.peeking}
+                        onBack={() => setShowEnhancer(false)}
+                        onClose={() => setShowEnhancer(false)}
+                        onUpdate={enhancer.update}
+                        onApplyPreset={enhancer.applyPreset}
+                        onReset={enhancer.reset}
+                        onToggleEnabled={enhancer.toggleEnabled}
+                        onPeekStart={enhancer.peekStart}
+                        onPeekEnd={enhancer.peekEnd}
+                        customPresets={enhancer.customPresets}
+                        canSaveMoreCustom={enhancer.canSaveMoreCustom}
+                        onSaveCustomPreset={enhancer.saveCustomPreset}
+                        onApplyCustomPreset={enhancer.applyCustomPreset}
+                        onDeleteCustomPreset={enhancer.deleteCustomPreset}
+                        onRenameCustomPreset={enhancer.renameCustomPreset}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
-            )}
+            </div>
           </div>
 
           <div className="relative">
