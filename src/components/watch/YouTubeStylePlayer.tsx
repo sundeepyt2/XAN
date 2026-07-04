@@ -330,6 +330,10 @@ export function YouTubeStylePlayer({
   //    Without this, mobile double-tap-to-seek ALSO triggers fullscreen toggle
   //    (because the browser synthesizes a dblclick after two touch taps).
   const suppressDblClickRef = useRef(false);
+  // ✅ YouTube-style 2x on long-press: timer + saved rate for restore
+  const holdSpeedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedRateRef = useRef<number>(1);
+  const holdSpeedRef = useRef(false);
   // ✅ Track which tier we've already logged for this stream — prevents
   // duplicate analytics events when the player retries within the same load.
   const tierLoggedRef = useRef<string | null>(null);
@@ -359,6 +363,8 @@ export function YouTubeStylePlayer({
   // ✅ Cursor auto-hide: when controls hide, the cursor also hides (cursor-none).
   //    Returns on any mouse move. Mirrors YouTube/Netflix behavior.
   const [cursorVisible, setCursorVisible] = useState(true);
+  // ✅ YouTube-style 2x speed on long-press (mouse hold)
+  const [holdSpeed, setHoldSpeed] = useState(false);
   const [timeMode, setTimeMode] = useState<TimeMode>("duration");
   const [seekHover, setSeekHover] = useState<{ x: number; t: number } | null>(null);
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null);
@@ -1167,6 +1173,9 @@ export function YouTubeStylePlayer({
   //    when the user moves the mouse. This mirrors YouTube's behavior where
   //    clicking the video pauses it silently without flashing the controls.
   const onVideoClick = useCallback(() => {
+    // ✅ Suppress click if a long-press 2x hold just ended — the user wanted
+    //    to scrub at 2x, not pause.
+    if (holdSpeedRef.current) return;
     if (showSettingsRef.current) {
       closeSettings();
       return;
@@ -1188,6 +1197,37 @@ export function YouTubeStylePlayer({
     if (showSettingsRef.current || showShortcutsRef.current) return;
     toggleFullscreen();
   }, [toggleFullscreen]);
+
+  // ──────────────────────────────────────────────────────────────
+  // YouTube-style 2x speed on mouse hold (desktop)
+  // ──────────────────────────────────────────────────────────────
+  // Hold mouse down for 400ms → speed jumps to 2x, shows "2x" badge.
+  // Release → restores previous speed. Click is suppressed so it doesn't pause.
+  const onVideoMouseDown = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !playingRef.current) return; // only when playing
+    holdSpeedTimerRef.current = setTimeout(() => {
+      savedRateRef.current = video.playbackRate;
+      video.playbackRate = 2;
+      setHoldSpeed(true);
+      holdSpeedRef.current = true;
+    }, 400);
+  }, []);
+
+  const onVideoMouseUp = useCallback(() => {
+    if (holdSpeedTimerRef.current) {
+      clearTimeout(holdSpeedTimerRef.current);
+      holdSpeedTimerRef.current = null;
+    }
+    if (holdSpeedRef.current) {
+      const video = videoRef.current;
+      if (video) video.playbackRate = savedRateRef.current;
+      setHoldSpeed(false);
+      // ✅ Keep holdSpeedRef=true so the subsequent click event is suppressed.
+      //    Reset after 150ms (after the click event has fired and been caught).
+      setTimeout(() => { holdSpeedRef.current = false; }, 150);
+    }
+  }, []);
 
   // ──────────────────────────────────────────────────────────────
   // Derived display values
@@ -1363,6 +1403,9 @@ export function YouTubeStylePlayer({
         onClick={onVideoClick}
         onDoubleClick={onVideoDoubleClick}
         onTouchStart={onVideoTouchStart}
+        onMouseDown={onVideoMouseDown}
+        onMouseUp={onVideoMouseUp}
+        onMouseLeave={onVideoMouseUp}
         title={title}
       />
 
@@ -1494,11 +1537,12 @@ export function YouTubeStylePlayer({
         </div>
       </div>
 
-      {/* ── Big center play button (when paused) ── */}
-      {/* ✅ Bug fix: pointer-events-none on overlay, pointer-events-auto on button */}
-      {/* ✅ Mobile: compact (w-11 h-11, h-5 icon) so it doesn't dominate the
-          small screen. Desktop (sm+): original size (w-20 h-20, h-9 icon). */}
-      {!playing && !loading && (
+      {/* ── Big center play button (when paused + controls visible) ── */}
+      {/* ✅ Only shows when paused AND controls are visible. When you click to
+          pause, controls hide (no mouse movement), so this button stays hidden
+          too — giving a clean, plain video with no overlays. It only appears
+          when you move the mouse (which shows controls). */}
+      {!playing && !loading && controlsVisible && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <button
             onClick={togglePlay}
@@ -1509,6 +1553,16 @@ export function YouTubeStylePlayer({
               <Play className="h-5 w-5 sm:h-9 sm:w-9 text-white fill-white ml-0.5 sm:ml-1" />
             </div>
           </button>
+        </div>
+      )}
+
+      {/* ── 2x speed indicator (YouTube-style long-press) ── */}
+      {holdSpeed && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-xan-crimson text-white text-sm font-bold shadow-lg">
+            <span>2x</span>
+            <span className="text-xs font-normal opacity-80">hold</span>
+          </div>
         </div>
       )}
 
