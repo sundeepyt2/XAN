@@ -502,6 +502,62 @@
   }
 }
 
+/* ─── TV Mode ─── */
+/* Applied via the .xan-tv-mode class on <html>. Disables ALL GPU-expensive
+   effects for low-powered devices (smart TVs, older tablets, etc.):
+   - backdrop-filter (glass) → solid backgrounds
+   - filter: blur() → sharp images
+   - Ken Burns, ambient blob, card-enter, shimmer animations → static
+   - Heavy box-shadows → simpler ones
+   - Hover scale transforms → no transform
+   Dramatically improves FPS on devices with weak GPUs. */
+.xan-tv-mode *,
+.xan-tv-mode *::before,
+.xan-tv-mode *::after {
+  /* Kill all backdrop filters (glass effects) — extremely expensive on TVs */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  /* Kill all blur filters */
+  filter: none !important;
+  /* Disable all animations */
+  animation: none !important;
+  /* Keep transitions but make them instant (still allows color changes) */
+  transition-duration: 0.01ms !important;
+  /* Disable hover transforms (scale, translate) — triggers compositing */
+  transform: none !important;
+}
+
+/* Restore essential transforms for layout (flex/grid items) */
+.xan-tv-mode .flex,
+.xan-tv-mode .grid,
+.xan-tv-mode [class*="translate"],
+.xan-tv-mode [class*="rotate"],
+.xan-tv-mode [class*="scale-100"] {
+  transform: revert !important;
+}
+
+/* Replace glass with solid dark backgrounds */
+.xan-tv-mode .glass {
+  background: rgba(20, 20, 24, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.xan-tv-mode .glass-strong {
+  background: rgba(10, 10, 12, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Simplify heavy shadows */
+.xan-tv-mode [class*="shadow-"] {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Keep hover color changes but remove scale transforms on cards/groups */
+.xan-tv-mode .group:hover *,
+.xan-tv-mode .group-hover\:scale-105,
+.xan-tv-mode .group-hover\:scale-110 {
+  transform: none !important;
+}
+
 /* ─── Subtle grain texture overlay ─── */
 .grain-overlay::after {
   content: "";

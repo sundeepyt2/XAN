@@ -27,6 +27,7 @@ import {
   EyeOff,
   Sparkles,
   Accessibility,
+  Tv,
   Trash2,
   Download,
   RotateCcw,
@@ -114,7 +115,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Palette; keywords: 
     id: "appearance",
     label: "Appearance",
     icon: Palette,
-    keywords: ["theme", "dark", "light", "color", "motion", "animation", "reduce motion", "look"],
+    keywords: ["theme", "dark", "light", "color", "motion", "animation", "reduce motion", "tv mode", "tv", "performance", "lag", "slow", "look"],
   },
   {
     id: "playback",
@@ -424,6 +425,19 @@ export default function SettingsPage() {
                   </button>
                 ))}
               </div>
+            </SettingRow>
+
+            <div className="h-px bg-xan-border/60" />
+
+            <SettingRow
+              icon={Tv}
+              title="TV Mode"
+              description="Disables all GPU-heavy effects (blur, glass, backdrop-filter, animations, hover transforms) to improve performance on smart TVs and low-powered devices. Turns blurry backgrounds into solid colors and removes decorative motion for a smoother experience."
+            >
+              <Switch
+                checked={settings.tvMode}
+                onCheckedChange={(v) => update("tvMode", v)}
+              />
             </SettingRow>
           </CardContent>
         </Card>

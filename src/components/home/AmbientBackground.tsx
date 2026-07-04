@@ -30,17 +30,14 @@ export function AmbientBackground({ color = "#e94560" }: AmbientBackgroundProps)
         }}
       />
 
-      {/* Primary color blob — top right */}
+      {/* Primary color blob — top right (reduced blur for perf) */}
       <div
-        className="absolute -top-32 -right-32 w-[55vw] h-[55vw] rounded-full blur-[120px] opacity-30 animate-mesh transition-colors duration-[2000ms]"
+        className="absolute -top-32 -right-32 w-[50vw] h-[50vw] rounded-full blur-[80px] opacity-25 animate-mesh transition-colors duration-[2000ms]"
         style={{ background: safeColor }}
       />
 
-      {/* Secondary violet blob — bottom left */}
-      <div className="absolute -bottom-40 -left-32 w-[55vw] h-[55vw] rounded-full blur-[120px] opacity-25 animate-mesh-2 bg-xan-violet" />
-
-      {/* Tertiary crimson blob — center */}
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[40vw] h-[40vw] rounded-full blur-[140px] opacity-15 animate-mesh bg-xan-crimson" />
+      {/* Secondary violet blob — bottom left (reduced blur for perf) */}
+      <div className="absolute -bottom-40 -left-32 w-[50vw] h-[50vw] rounded-full blur-[80px] opacity-20 animate-mesh-2 bg-xan-violet" />
 
       {/* Bottom fade to solid for content legibility */}
       <div
@@ -50,9 +47,6 @@ export function AmbientBackground({ color = "#e94560" }: AmbientBackgroundProps)
             "linear-gradient(to bottom, transparent, rgba(10,10,10,0.6) 60%, #0a0a0a 100%)",
         }}
       />
-
-      {/* Subtle grain */}
-      <div className="absolute inset-0 grain-overlay" />
     </div>
   );
 }

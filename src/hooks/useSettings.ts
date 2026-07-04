@@ -92,6 +92,19 @@ export interface Settings {
    */
   reducedMotion: "auto" | "reduce" | "no-reduce";
 
+  // ─── Performance ───
+  /**
+   * TV Mode — disables all GPU-expensive effects for low-powered devices
+   * (smart TVs, older tablets, etc.). When ON:
+   *   - Disables all backdrop-filter (glass) → solid backgrounds
+   *   - Disables all blur() filters → sharp images
+   *   - Disables Ken Burns, ambient blob, card-enter animations
+   *   - Reduces shadows to simpler/cheaper ones
+   *   - Disables hover scale transforms
+   * Dramatically improves FPS on devices with weak GPUs.
+   */
+  tvMode: boolean;
+
   // ─── Data & Privacy ───
   /** Track watch history in localStorage */
   saveHistory: boolean;
@@ -115,6 +128,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hideSpoilers: false,
   defaultSort: "trending",
   reducedMotion: "auto",
+  tvMode: false,
   saveHistory: true,
 };
 

@@ -109,7 +109,7 @@ export function HeroCarousel({ anime, onActiveChange }: HeroCarouselProps) {
             fill
             priority={active === 0}
             sizes="100vw"
-            className="object-cover scale-125 blur-2xl"
+            className="object-cover scale-125 blur-xl"
           />
         </motion.div>
       </AnimatePresence>
@@ -363,7 +363,7 @@ export function HeroCarousel({ anime, onActiveChange }: HeroCarouselProps) {
             >
               {/* Color glow behind the poster (from cover color) */}
               <div
-                className="absolute -inset-6 rounded-3xl blur-3xl opacity-30 transition-colors duration-700"
+                className="absolute -inset-6 rounded-3xl blur-2xl opacity-25 transition-colors duration-700"
                 style={{ background: current.coverImage?.color ?? "#e94560" }}
                 aria-hidden
               />
