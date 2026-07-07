@@ -1,0 +1,74 @@
+# .github/workflows/deploy-cf-worker.yml
+#
+# Auto-deploys the XAN Cloudflare Worker whenever cf-worker/ files change on main.
+# No local PC needed — GitHub runs `wrangler deploy` for you.
+#
+# Setup (one-time, all done in browser):
+#   1. Create a Cloudflare API token:
+#      - Go to https://dash.cloudflare.com/profile/api-tokens
+#      - Click "Create Token" → "Edit Cloudflare Workers" template → "Continue to summary"
+#      - Under "Account Resources", select your account
+#      - Under "Worker Resources", select "xan-stream-proxy" (or "All workers")
+#      - Click "Create Token" → COPY the token (you won't see it again)
+#
+#   2. Add the token to GitHub as a secret:
+#      - Go to https://github.com/sundeepyt2/XAN/settings/secrets/actions
+#      - Click "New repository secret"
+#      - Name: CLOUDFLARE_API_TOKEN
+#      - Value: paste the token from step 1
+#      - Click "Add secret"
+#
+#   3. Also add your Cloudflare Account ID:
+#      - Find it at https://dash.cloudflare.com → right sidebar → "Account ID"
+#      - Add another secret: Name: CLOUDFLARE_ACCOUNT_ID, Value: your account ID
+#
+# After setup, every push to main that touches cf-worker/ triggers a deploy.
+# Watch the deploy: https://github.com/sundeepyt2/XAN/actions
+
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cf-worker/**"
+      - ".github/workflows/deploy-cf-worker.yml"
+  workflow_dispatch: # Allow manual trigger from Actions tab
+
+jobs:
+  deploy:
+    name: Deploy Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cf-worker/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cf-worker
+        run: npm install
+
+      - name: Deploy with wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cf-worker
+          command: deploy
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Worker deployed successfully"
+          echo "🔗 URL: https://xan-stream-proxy.<your-subdomain>.workers.dev"
+          echo ""
+          echo "Test the health check:"
+          curl -s "https://xan-stream-proxy.${{ secrets.CLOUDFLARE_WORKER_SUBDOMAIN }}.workers.dev/" | head -c 500
+          echo ""
