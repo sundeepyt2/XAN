@@ -1,12 +1,34 @@
-# Cloudflare Worker config for XAN stream proxy
+# Cloudflare Worker config for XAN stream proxy + AllAnime episode resolver
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
 
 name = "xan-stream-proxy"
 main = "worker.js"
 compatibility_date = "2024-12-01"
 
+# ─── Browser Rendering binding ───────────────────────────────────────────
+# This gives the Worker access to a managed Chrome browser on Cloudflare's
+# edge, used to solve AllAnime's Turnstile captcha automatically.
+#
+# Free tier limits (no payment needed):
+#   - 10 minutes/day of browser CPU time
+#   - 10 concurrent browser sessions
+#   - 60 seconds max per browser session
+#
+# For an anime streaming site, 10 min/day covers ~20-60 uncached solves,
+# which with 5-min caching = 100-300 episodes/day. Plenty for personal use.
+#
+# Docs: https://developers.cloudflare.com/browser-rendering/get-started/
+[[browser]]
+binding = "BROWSER"
+
 # Workers don't need a "routes" section — they automatically get a URL at:
 #   https://xan-stream-proxy.<your-account-subdomain>.workers.dev
 #
 # After deploying, copy that URL and set it as NEXT_PUBLIC_CF_WORKER_URL
 # in your Vercel project's environment variables.
+
+# ─── No secrets required! ────────────────────────────────────────────────
+# Unlike the previous (v3) version which required SOLVER_API_KEY for
+# 2captcha/CapSolver, this v4 version uses Cloudflare Browser Rendering
+# (included in the Workers free tier). No external service, no API key,
+# no payment.

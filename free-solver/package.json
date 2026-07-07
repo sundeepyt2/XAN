@@ -1,0 +1,20 @@
+{
+  "name": "xan-free-solver",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Free Playwright-based Turnstile solver for AllAnime episode sources. Runs on Oracle Cloud Free Tier (or any free VPS).",
+  "scripts": {
+    "start": "node server.js",
+    "start:pm2": "pm2 start server.js --name xan-solver --max-memory-restart 800M",
+    "install-browser": "npx puppeteer browsers install chrome"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer": "^23.4.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

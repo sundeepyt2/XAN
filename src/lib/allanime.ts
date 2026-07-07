@@ -287,11 +287,16 @@ export async function getEpisodeSources(
   // ✅ CF Worker URL — used as fallback when direct episode query fails
   const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
 
-  async function tryEpisodeFetch(fetchUrl: string): Promise<Response | null> {
+  async function tryEpisodeFetch(fetchUrl: string, timeoutMs?: number): Promise<Response | null> {
     try {
+      // Use a separate AbortController per fetch so the CF Worker episode
+      // resolver (which can take 30-120s on first call due to Turnstile
+      // solver) doesn't share the short 12s timeout of direct API calls.
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs ?? REQUEST_TIMEOUT_MS);
       const res = await fetch(fetchUrl, {
         method: "GET",
-        signal: controller.signal,
+        signal: ctrl.signal,
         headers: {
           Accept: "application/json",
           "User-Agent": USER_AGENT,
@@ -300,6 +305,7 @@ export async function getEpisodeSources(
         },
         next: { revalidate: 600 },
       });
+      clearTimeout(t);
       return res;
     } catch (err) {
       console.warn(`[AllAnime] episode query fetch failed:`, err);
@@ -333,7 +339,70 @@ export async function getEpisodeSources(
 
     const json = await res.json();
     if (json?.errors) {
-      console.warn("[AllAnime] episode query errors:", json.errors[0]?.message);
+      const errMsg = json.errors[0]?.message ?? "";
+      const errCode = json.errors[0]?.extensions?.code ?? "";
+      console.warn("[AllAnime] episode query errors:", errMsg, errCode);
+
+      // ─── Step 3: AA_CRYPTO_MISSING fallback ───
+      // As of mid-2026, AllAnime's episode query requires a Turnstile captcha
+      // token. Without one, the server returns AA_CRYPTO_MISSING. We try the
+      // free solver (or CF Worker if it's v3 with /allanime/episode endpoint)
+      // to solve the captcha and return the decrypted sourceUrls.
+      //
+      // Solver URL precedence:
+      //   1. NEXT_PUBLIC_FREE_SOLVER_URL (free — Puppeteer on a VPS/local)
+      //   2. NEXT_PUBLIC_CF_WORKER_URL   (only if v3 — has /allanime/episode endpoint;
+      //                                   v2 Workers will 404 and we skip gracefully)
+      const FREE_SOLVER_URL = process.env.NEXT_PUBLIC_FREE_SOLVER_URL ?? "";
+      const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL;
+
+      if (errCode === "AA_CRYPTO_MISSING" && solverUrl) {
+        const solverType = FREE_SOLVER_URL ? "free-solver" : "cf-worker";
+        console.warn(
+          `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver (with Turnstile solver)...`,
+        );
+        const epEndpoint = `${solverUrl}/allanime/episode?` +
+          new URLSearchParams({
+            showId,
+            episodeString: episodeStr,
+            translationType: mode,
+          }).toString();
+
+        // 150s timeout — first captcha solve can take 30-120s; cached calls <1s.
+        const solverRes = await tryEpisodeFetch(epEndpoint, 150_000);
+        if (solverRes && solverRes.ok) {
+          const solverJson = await solverRes.json();
+          if (
+            solverJson.sources &&
+            Array.isArray(solverJson.sources) &&
+            solverJson.sources.length > 0
+          ) {
+            console.log(
+              `[AllAnime] ${solverType} episode resolver returned ${solverJson.sources.length} sources`,
+            );
+            return solverJson.sources as SourceUrl[];
+          }
+          console.warn(
+            `[AllAnime] ${solverType} episode resolver returned no sources:`,
+            solverJson.error ?? "empty",
+          );
+        } else {
+          // 404 means the CF Worker is v2 (no /allanime/episode endpoint) —
+          // user needs to deploy the free solver. Log clearly.
+          const status = solverRes?.status ?? "null";
+          if (status === 404 && !FREE_SOLVER_URL) {
+            console.warn(
+              `[AllAnime] CF Worker returned 404 for /allanime/episode — you have a v2 Worker (stream-proxy only). ` +
+                `Deploy the free solver (free-solver/README.md) and set NEXT_PUBLIC_FREE_SOLVER_URL in Vercel.`,
+            );
+          } else {
+            console.warn(
+              `[AllAnime] ${solverType} episode resolver HTTP ${status}`,
+            );
+          }
+        }
+      }
+
       return null;
     }
 

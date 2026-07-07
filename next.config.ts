@@ -17,6 +17,16 @@ const nextConfig: NextConfig = {
         pathname: "/vi/**",
       },
     ],
+    // ✅ CRITICAL — bypass Vercel's Image Optimization to stay under the
+    // Hobby-tier "Image Optimization - Transformation" quota (5k/month).
+    // The app renders thousands of unique AniList cover images (every anime
+    // card is a distinct URL). Each unique (src × width × dpr) variant counts
+    // as one transformation, so a single browse session can blow through the
+    // entire monthly quota. AniList's CDN already serves reasonably-sized
+    // JPEG/WebP, so we lose almost nothing by skipping Vercel's re-encode.
+    // Side-effect: <Image> still lazy-loads and respects `sizes`, it just
+    // serves the original URL directly (no /_next/image?url=... hop).
+    unoptimized: true,
   },
   // Don't ignore build errors — we want type safety.
   // But we DO want to skip type-checking files outside src/ (skills/, scripts/, etc.)

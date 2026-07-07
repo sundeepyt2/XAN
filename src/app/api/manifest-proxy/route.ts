@@ -198,7 +198,16 @@ export async function GET(request: Request) {
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "range",
         "access-control-expose-headers": "content-length, content-type",
-        "cache-control": "no-store, no-cache, must-revalidate",
+        // ✅ Edge-cache the rewritten manifest for 60s to skip the upstream
+        //    fetch on repeat plays / seeks within the same session. HLS
+        //    VOD manifests are stable enough for short caching; signed
+        //    segment URLs embedded in the manifest typically live for
+        //    hours, so a 60s manifest cache is safe.
+        //    Previously `no-store` which forced a Vercel function invocation
+        //    + AniList/AllAnime fetch on every play — burning Fast Origin
+        //    Transfer bytes for no reason.
+        "cache-control": "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+        vary: "Origin",
       },
     });
   } catch (err) {

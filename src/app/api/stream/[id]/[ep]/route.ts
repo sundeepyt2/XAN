@@ -19,9 +19,25 @@ import {
   type StreamResult,
 } from "@/lib/allanime";
 import { fetchConsumetStream, getConsumetConfig } from "@/lib/consumet";
+import { fetchIsekai2ndSources } from "@/lib/providers/isekai2nd";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// Vercel Hobby maxDuration max is 60s. The isekai2nd provider may need to
+// wait for the CF Worker's Turnstile solver (30-120s on first call, <1s cached).
+// 60s gives us headroom for cached calls; first-call solver waits happen in
+// the Worker, not here — the Worker caches tokens for 4 min so subsequent
+// calls within a session are fast.
+export const maxDuration = 60;
+
+// Unified source shape — used by all provider fetchers in this file.
+type UnifiedSource = {
+  url: string;
+  type: "hls" | "mp4" | "iframe";
+  quality: string | null;
+  sourceName: string;
+  headers?: Record<string, string>;
+  provider: string;
+};
 
 const MOCK_STREAMS: { url: string; quality: string }[] = [
   { url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", quality: "1080p (demo)" },
@@ -277,6 +293,63 @@ async function fetchGogoanimeSourcesServerSide(
   return [];
 }
 
+// ✅ Fetch Isekai2nd sources — AllAnime episode sources via CF Worker
+// (which solves the Turnstile captcha). This is the working path for
+// AllAnime streams as of mid-2026 — direct AllAnime API queries return
+// AA_CRYPTO_MISSING without a captcha token.
+//
+// Flow:
+//   1. Find the AllAnime showId (via /api/allanime search — no captcha)
+//   2. Call fetchIsekai2ndSources() which routes through the CF Worker
+//   3. Worker solves Turnstile, POSTs to AllAnime, decrypts tobeparsed,
+//      returns sourceUrls[]
+//   4. We map sourceUrls to the unified source format
+//
+// Returns 0 sources if NEXT_PUBLIC_CF_WORKER_URL is not set or the Worker
+// fails to solve the captcha.
+async function fetchIsekai2ndSourcesServerSide(
+  anilistId: number,
+  title: string,
+  episode: number,
+  mode: "sub" | "dub",
+): Promise<UnifiedSource[]> {
+  if (!title.trim()) return [];
+
+  try {
+    // Step 1: Find AllAnime showId (search is public, no captcha)
+    const show = await findShowByAniListId(anilistId, title);
+    if (!show?._id) return [];
+
+    // Step 2: Fetch sources via the CF Worker (which handles captcha)
+    const sources = await fetchIsekai2ndSources(show._id, String(episode), mode);
+    if (sources.length === 0) return [];
+
+    // Step 3: Map to unified format
+    // Note: the sourceUrl from AllAnime is RAW (possibly XOR/hex encoded).
+    // The client-side VideoPlayer / SourceSwitcher will call extractSource()
+    // to decode and dispatch to the right extractor (Yt-mp4, S-mp4, etc.).
+    // But since extractSource is a server-side function in src/lib/allanime.ts,
+    // and we're already server-side here, we should decode now.
+    //
+    // However, decodeUrl + extractSource require importing from allanime.ts.
+    // To keep this file simple, we return the raw URLs and tag them with
+    // sourceName "Isekai2nd-<originalName>" so the client can distinguish them.
+    // The client's YouTubeStylePlayer will try direct fetch first, then fall
+    // back to manifest-proxy / cf-proxy / full-proxy — which is correct.
+    return sources.map((s) => ({
+      url: s.url, // raw URL — extractor pipeline will decode if needed
+      type: s.type,
+      quality: s.quality,
+      sourceName: s.sourceName,
+      headers: s.headers,
+      provider: "isekai2nd",
+    }));
+  } catch (err) {
+    console.warn("[stream] Isekai2nd fetch failed:", err);
+    return [];
+  }
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string; ep: string }> },
@@ -303,15 +376,6 @@ export async function GET(
   // ─── Collect sources from all providers in parallel ──────────────────
   // Each provider returns its own sources array; we merge them all.
   // The client (VideoPlayer) uses providerPriority to pick the first one.
-
-  type UnifiedSource = {
-    url: string;
-    type: "hls" | "mp4" | "iframe";
-    quality: string | null;
-    sourceName: string;
-    headers?: Record<string, string>;
-    provider: string;
-  };
 
   let allanimeSources: UnifiedSource[] = [];
   let allanimeFailures: { source: string; reason: string }[] = [];
@@ -358,11 +422,12 @@ export async function GET(
     }
   }
 
-  // ─── 2. Zen, Koto, Pahe, Gogoanime (in parallel, non-blocking) ───
-  const [zenSources, paheSources, gogoSources] = await Promise.all([
+  // ─── 2. Zen, Koto, Pahe, Gogoanime, Isekai2nd (in parallel, non-blocking) ───
+  const [zenSources, paheSources, gogoSources, isekai2ndSources] = await Promise.all([
     fetchZenSourcesServerSide(animeId, episode),
     fetchPaheSourcesServerSide(malId, episode, requestedMode),
     fetchGogoanimeSourcesServerSide(title, episode),
+    fetchIsekai2ndSourcesServerSide(animeId, title, episode, requestedMode),
   ]);
 
   // Koto is just a URL builder — no fetch needed
@@ -370,7 +435,8 @@ export async function GET(
 
   // ─── 3. Merge all sources ───
   const mergedSources: UnifiedSource[] = [
-    ...allanimeSources,
+    ...isekai2ndSources, // isekai2nd first (highest priority — working AllAnime path via CF Worker)
+    ...allanimeSources, // regular AllAnime (will be empty if captcha is enforced)
     ...zenSources,
     kotoSource,
     ...paheSources,

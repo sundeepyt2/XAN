@@ -4,6 +4,7 @@
 
 export type ProviderId =
   | "allanime" // Our existing AllAnime extractor (Yt-mp4, Mp4, Sw, Ok, etc.)
+  | "isekai2nd" // AllAnime episode sources via CF Worker (Turnstile solver)
   | "zen" // flixcloud.cc — HLS embed (often blocked by Cloudflare)
   | "koto" // megaplay.buzz — iframe embed
   | "pahe" // nekostream — MP4 downloads
@@ -29,10 +30,18 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "allanime",
     name: "AllAnime",
-    description: "Primary provider — extracts streams from AllAnime's API. Returns multiple sources per episode (Yt-mp4, Mp4, StreamWish, Ok.ru, etc.)",
+    description: "Primary provider — extracts streams from AllAnime's API. Returns multiple sources per episode (Yt-mp4, Mp4, StreamWish, Ok.ru, etc.). NOTE: As of mid-2026, AllAnime requires a Turnstile captcha for episode queries — this provider will return 0 sources unless the CF Worker (with solver) is deployed.",
     supportsSub: true,
     supportsDub: true,
-    defaultPriority: 100,
+    defaultPriority: 90, // lowered from 100 — isekai2nd is now preferred
+  },
+  {
+    id: "isekai2nd",
+    name: "Isekai2nd",
+    description: "AllAnime episode sources routed through the Cloudflare Worker (which solves the Turnstile captcha via 2captcha/CapSolver). Same upstream CDNs as AllAnime (tools.fast4speed.rsvp, megacloud.tv, etc.) but uses isekai2nd.com as the Referer — AllAnime's official config for episode streams. Requires NEXT_PUBLIC_CF_WORKER_URL.",
+    supportsSub: true,
+    supportsDub: true,
+    defaultPriority: 100, // highest — this is the working path for AllAnime sources
   },
   {
     id: "zen",

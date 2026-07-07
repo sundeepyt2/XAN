@@ -32,12 +32,26 @@ export interface Settings {
   // ─── Bandwidth ───
   /**
    * How the player should load video streams. Controls the tier cascade:
-   *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (default)
+   *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (DEFAULT)
+   *                       full-proxy is the only tier that uses Vercel bandwidth,
+   *                       and only fires when direct/manifest-proxy/cf-proxy all
+   *                       fail. The proxy_stream route now edge-caches 2xx
+   *                       responses (immutable), so repeated segment fetches hit
+   *                       Vercel's edge cache instead of re-streaming.
    *   "auto-no-vercel"  — direct → manifest-proxy → cf-proxy (NO full-proxy; 0 Vercel BW)
    *   "direct-only"     — direct only; no proxy (fails for Referer-enforced streams)
    *   "cf-only"         — CF Worker only; 0 Vercel BW but requires NEXT_PUBLIC_CF_WORKER_URL
    *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no manifest-proxy, no full-proxy
    *   "proxy-only"      — full-proxy only (Vercel); for users whose ISP blocks CDNs
+   *
+   * ✅ Default is "auto" (full cascade) so playback just works for everyone.
+   *    Bandwidth bleed is bounded by:
+   *      1. Edge-cached manifests (manifest-proxy route, 60s browser / 300s edge)
+   *      2. Edge-cached segments (proxy_stream route, immutable, 7d edge)
+   *      3. CF Worker tier between manifest-proxy and full-proxy (when
+   *         NEXT_PUBLIC_CF_WORKER_URL is set, CF absorbs most fallbacks).
+   *    If Vercel BW usage climbs again, switch to "auto-no-vercel" in Settings
+   *    or deploy the CF Worker in ./cf-worker.
    */
   bandwidthMode:
     | "auto"
@@ -123,7 +137,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showSourceSwitcher: true,
   disabledSources: [],
   pinnedSource: null,
-  providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
+  providerPriority: ["isekai2nd", "allanime", "zen", "koto", "pahe", "gogoanime"],
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",
@@ -133,6 +147,10 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 const STORAGE_KEY = "xan-settings";
+// ✅ Bump whenever a setting default changes in a way that should overwrite
+// the user's previously-stored value. The migration runs once per bump.
+const SETTINGS_VERSION = 4;
+const SETTINGS_VERSION_KEY = "xan-settings-version";
 
 function readSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -141,7 +159,47 @@ function readSettings(): Settings {
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<Settings>;
     // Merge with defaults so missing keys fall back gracefully
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    let merged: Settings = { ...DEFAULT_SETTINGS, ...parsed };
+
+    // ─── Migrations ────────────────────────────────────────────────────
+    const storedVersion = Number(localStorage.getItem(SETTINGS_VERSION_KEY) ?? "0");
+    if (storedVersion < 2) {
+      // v2 (historical): default bandwidthMode switched "auto" → "auto-no-vercel".
+      // No-op now — v3 reverts this.
+    }
+    if (storedVersion < 3) {
+      // v3: default bandwidthMode reverted to "auto" (full cascade). The
+      // proxy_stream route now edge-caches 2xx responses as immutable, and
+      // the manifest-proxy route is also edge-cached, so the full-proxy
+      // tier no longer re-bills Vercel bandwidth on repeat fetches. Users
+      // previously migrated to "auto-no-vercel" by v2 are restored to "auto"
+      // so they get the full fallback cascade again.
+      if (merged.bandwidthMode === "auto-no-vercel") {
+        merged.bandwidthMode = "auto";
+      }
+    }
+    if (storedVersion < 4) {
+      // v4: providerPriority updated to put "isekai2nd" first.
+      // As of mid-2026, AllAnime's episode query requires a Turnstile captcha
+      // (returns AA_CRYPTO_MISSING without one). The new "isekai2nd" provider
+      // routes through the CF Worker (with solver) to handle the captcha.
+      // Users who explicitly customized their priority list are respected —
+      // we only migrate if they're still on the old default.
+      const oldDefault = ["allanime", "zen", "koto", "pahe", "gogoanime"];
+      const isOldDefault =
+        Array.isArray(merged.providerPriority) &&
+        merged.providerPriority.length === oldDefault.length &&
+        merged.providerPriority.every((p, i) => p === oldDefault[i]);
+      if (isOldDefault) {
+        merged.providerPriority = ["isekai2nd", "allanime", "zen", "koto", "pahe", "gogoanime"];
+      }
+      // Also: if "isekai2nd" is missing entirely, prepend it (user customized
+      // priority but should still get the new provider).
+      if (Array.isArray(merged.providerPriority) && !merged.providerPriority.includes("isekai2nd")) {
+        merged.providerPriority = ["isekai2nd", ...merged.providerPriority];
+      }
+    }
+    return merged;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -151,6 +209,7 @@ function writeSettings(s: Settings): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    localStorage.setItem(SETTINGS_VERSION_KEY, String(SETTINGS_VERSION));
   } catch {
     // localStorage not available (privacy mode) — silently ignore
   }

@@ -106,6 +106,22 @@ async function proxyStream(
       "content-length, content-range, content-type",
     );
 
+    // ✅ Cache VOD segments at the edge. Most upstream CDNs return immutable
+    //    .ts/.m4s/.mp4 chunks whose content never changes (only the signed
+    //    URL changes). When the browser requests the same proxied URL again
+    //    (e.g. user seeks back, or a different user plays the same episode),
+    //    Vercel's edge cache can serve it without re-fetching from the
+    //    upstream CDN — saving Fast Origin Transfer bytes.
+    //    Range requests are honoured separately (Vary: Range) so partial
+    //    content responses don't poison full-content caches.
+    if (upstream.status >= 200 && upstream.status < 300) {
+      respHeaders.set(
+        "cache-control",
+        "public, max-age=86400, s-maxage=604800, immutable",
+      );
+      respHeaders.append("vary", "Range");
+    }
+
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
