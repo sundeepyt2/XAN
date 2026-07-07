@@ -1,432 +1,450 @@
-// XAN Cloudflare Worker v4 — Stream Proxy + AllAnime Episode Resolver
+// XAN Cloudflare Worker v5 — Stream Proxy + AllAnime Episode Resolver (direct crypto)
 //
-// This Worker does TWO jobs, both 100% free (no card, no external service):
+// BREAKTHROUGH: Instead of using Browser Rendering to load mkissa.to and
+// intercept the API call, this Worker implements AllAnime's NEW crypto
+// scheme DIRECTLY. No browser needed — just pure Web Crypto.
 //
-//   1. Stream proxy (existing) — proxies video segment/manifest requests to
-//      anime CDNs that require Referer/Origin headers. Browsers can't set
-//      those headers themselves, so the Worker adds them.
-//      Endpoint: GET /?url=<stream_url>&h_Referer=...&h_Origin=...
+// The crypto scheme (reverse-engineered from mkissa.to's SvelteKit bundle):
 //
-//   2. AllAnime episode resolver (NEW — uses Cloudflare Browser Rendering) —
-//      fetches episode source URLs from AllAnime's GraphQL API, which as of
-//      mid-2026 requires a Cloudflare Turnstile captcha token. The Worker
-//      launches a managed Chrome browser on Cloudflare's edge, navigates to
-//      AllAnime's episode page, the browser auto-passes Cloudflare's
-//      "Just a moment..." challenge and AllAnime's Vue app auto-solves the
-//      Turnstile widget (managed mode = no user interaction). The Worker
-//      intercepts the GraphQL response, decrypts the AES-GCM-encrypted
-//      `tobeparsed` field, and returns the sourceUrls[] as JSON.
-//      Endpoint: GET /allanime/episode?showId=...&episodeString=...&translationType=sub|dub
+//   1. AllAnime embeds __aaCrypto = {epoch, partB} in the page HTML
+//      (mkissa.to returns 200 with no Cloudflare challenge)
+//   2. The AES key is derived: key = XOR(atob(partB), hexToBytes(MASK))
+//      where MASK = "b1a9a4d051988f1b1b12dbb747439d9bd64b09ea17835600a7eaa4de87c1ad87"
+//   3. For each episode query, build a signed "aaReq" extension:
+//      a. ts = Math.floor(Date.now() / 300000) * 300000  (5-min bucket)
+//      b. payload = JSON.stringify({v:1, ts, epoch, buildId:"9", qh:queryHash})
+//      c. iv = SHA-256(epoch + ":" + buildId + ":" + queryHash + ":" + ts).slice(0, 12)
+//      d. encrypted = AES-GCM-encrypt(key, iv, payload)
+//      e. aaReq = base64([0x01][iv(12)][encrypted+tag])
+//   4. POST to https://api.allanime.day/api with:
+//      - body: {query, variables, extensions: {persistedQuery, aaReq}}
+//      - headers: Content-Type: application/json, x-build-id: "9"
+//   5. Server returns tobeparsed (encrypted with OLD key sha256("Xot36i3lK3:v1"))
+//   6. Worker decrypts tobeparsed → sourceUrls
 //
-// Free tier limits (no payment needed):
-//   - 100,000 Worker requests/day
-//   - 10 minutes/day of browser CPU time
-//   - 10 concurrent browser sessions
-//   - 60 seconds max per browser session
-//
-// For a personal XAN instance, these limits are generous. With 5-min caching,
-// 10 min of browser CPU covers ~100-300 episode plays/day.
+// This is 10x faster than Browser Rendering (no Chrome launch) and works
+// on the free tier with no browser CPU limits.
 
-import puppeteer from "@cloudflare/puppeteer";
+// ─── Constants (from mkissa.to's bundle) ──────────────────────────────────
+const MASK_HEX = "b1a9a4d051988f1b1b12dbb747439d9bd64b09ea17835600a7eaa4de87c1ad87";
+const BUILD_ID = "9";
+const OLD_KEY_STR = "Xot36i3lK3:v1"; // for decrypting tobeparsed (unchanged)
+const ALLANIME_API = "https://api.allanime.day/api";
+const MKISSA_EPISODE_URL = (showId, ep, mode) => `https://mkissa.to/watch/${showId}/p-${ep}-${mode}`;
 
-// ─── Stream proxy allowlist (unchanged from v2/v3) ───────────────────────
+// ─── Stream proxy allowlist (unchanged) ───────────────────────────────────
 const ALLOWED_HOSTS = [
-  "tools.fast4speed.rsvp",
-  "megacloud.tv",
-  "vixcloud.co",
-  "youtu-chan.com",
-  "allanime.day",
-  "allanime.uns.bio",
-  "mp4upload.com",
-  "bysekoze.com",
-  "vidnest.io",
-  "ok.ru",
-  "repackager.wixmp.com",
-  "allanimenews.com",
-  "sharepoint.com",
-  "fast4speed.rsvp",
-  "wixmp.com",
-  "pahe.nekostream.site",
-  "nekostream.site",
-  "kwik.cx",
-  "kwik.si",
-  "streamwish.to",
-  "megaplay.buzz",
-  "flixcloud.cc",
-  "gogoanime.fi",
-  "gogoanime.vc",
-  "gogoanime.dk",
-  "isekai2nd.com",
+  "tools.fast4speed.rsvp", "megacloud.tv", "vixcloud.co", "youtu-chan.com",
+  "allanime.day", "allanime.uns.bio", "mp4upload.com", "bysekoze.com",
+  "vidnest.io", "ok.ru", "repackager.wixmp.com", "allanimenews.com",
+  "sharepoint.com", "fast4speed.rsvp", "wixmp.com", "pahe.nekostream.site",
+  "nekostream.site", "kwik.cx", "kwik.si", "streamwish.to", "megaplay.buzz",
+  "flixcloud.cc", "gogoanime.fi", "gogoanime.vc", "gogoanime.dk", "isekai2nd.com",
 ];
 
 function isAllowedHost(urlStr) {
   try {
     const u = new URL(urlStr);
     const host = u.hostname.toLowerCase();
-    return ALLOWED_HOSTS.some(
-      (h) => host === h || host.endsWith("." + h)
-    );
-  } catch (e) {
-    return false;
-  }
+    return ALLOWED_HOSTS.some((h) => host === h || host.endsWith("." + h));
+  } catch { return false; }
 }
 
-const FORWARD_RESPONSE_HEADERS = [
-  "content-type",
-  "content-length",
-  "content-range",
-  "accept-ranges",
-  "cache-control",
-  "etag",
-  "last-modified",
-];
-
-const FORWARD_REQUEST_HEADERS = ["range", "if-range", "if-modified-since"];
-
+const FORWARD_RESPONSE_HEADERS = ["content-type","content-length","content-range","accept-ranges","cache-control","etag","last-modified"];
+const FORWARD_REQUEST_HEADERS = ["range","if-range","if-modified-since"];
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "range",
-  "access-control-expose-headers":
-    "content-length, content-range, content-type",
+  "access-control-expose-headers": "content-length, content-range, content-type",
 };
 
 function jsonError(message, status) {
   return new Response(JSON.stringify({ error: message }), {
     status: status || 400,
-    headers: {
-      "content-type": "application/json",
-      "access-control-allow-origin": "*",
-    },
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
   });
 }
 
-// ─── AllAnime AES-GCM decryption ──────────────────────────────────────────
-// AllAnime encrypts the `episode.sourceUrls` field as `tobeparsed` — a base64
-// blob with this structure:
-//   byte 0:        version flag (must be 0x01)
-//   bytes 1-13:    IV (12 bytes)
-//   bytes 13-(N-16): ciphertext
-//   last 16 bytes: GCM auth tag
-// Key: SHA-256("Xot36i3lK3:v1")  (derived from char-code constants in bundle)
-
-const ALLANIME_KEY_STR = "Xot36i3lK3:v1";
-const ALLANIME_REFERER = "https://isekai2nd.com";
-const ALLANIME_ORIGIN = "https://isekai2nd.com";
-
-async function getAllAnimeKey() {
-  const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest("SHA-256", enc.encode(ALLANIME_KEY_STR));
-  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["decrypt"]);
-}
-
-async function decryptTobeparsed(b64) {
-  try {
-    // Decode base64 to bytes
-    const binaryStr = atob(b64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-
-    if (bytes.length < 32 || bytes[0] !== 1) return null;
-
-    const iv = bytes.slice(1, 13);
-    const ctWithTag = bytes.slice(13); // AES-GCM expects ciphertext+tag concatenated
-
-    const key = await getAllAnimeKey();
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      ctWithTag
-    );
-    return JSON.parse(new TextDecoder().decode(plaintext));
-  } catch (err) {
-    console.error("[worker] decryptTobeparsed failed:", err);
-    return null;
-  }
-}
-
-// ─── In-memory response cache ────────────────────────────────────────────
-// Episode sources don't change often — cache for 5 min to avoid re-launching
-// the browser for repeat requests. Cache is per-Worker-isolate (not shared
-// globally, but good enough — Cloudflare reuses isolates aggressively).
-const responseCache = new Map(); // key: "showId:ep:mode" → { sources, expiresAt }
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function getCached(key) {
-  const cached = responseCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.sources;
-  }
-  if (cached) responseCache.delete(key); // expired
-  return null;
-}
-
-function setCached(key, sources) {
-  responseCache.set(key, { sources, expiresAt: Date.now() + CACHE_TTL_MS });
-  // Cap cache size to prevent memory leaks
-  if (responseCache.size > 100) {
-    const oldestKey = responseCache.keys().next().value;
-    responseCache.delete(oldestKey);
-  }
-}
-
-// ─── AllAnime episode resolver using Cloudflare Browser Rendering ─────────
-//
-// Flow:
-//   1. Check cache — return immediately if hit
-//   2. Launch managed Chrome browser via env.BROWSER binding
-//   3. Open a new page, set realistic User-Agent
-//   4. Register a response interceptor for api.allanime.day requests
-//   5. Navigate to https://allmanga.to/bangumi/<showId>/p-<ep>-<mode>
-//   6. Cloudflare's "Just a moment..." challenge auto-passes (Chrome on CF
-//      infra is more trusted than random VPS IPs)
-//   7. AllAnime's Vue app auto-renders Turnstile widget, which auto-solves
-//      (managed mode = no user interaction)
-//   8. Vue app fetches episode sources with the captcha token
-//   9. Our interceptor captures the response, decrypts tobeparsed
-//  10. Close browser, cache sources, return JSON
-//
-// If the browser approach fails (CF challenge doesn't pass, Turnstile doesn't
-// auto-solve, etc.), we fall back to a direct API call from the Worker. The
-// Worker's IP is Cloudflare's, which may be more trusted than Vercel's.
-//
-// Time budget: 60s max per browser session (Cloudflare limit). Typical
-// execution: 20-40s.
-
-// Helper: convert any error to a string (handles non-Error throws)
 function errToString(err) {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
   try { return JSON.stringify(err); } catch { return String(err); }
 }
 
-async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translationType, env) {
+// ─── AES-GCM decryption for tobeparsed ────────────────────────────────────
+// mkissa.to's NEW scheme encrypts tobeparsed with the SAME key used for
+// signing requests (mask XOR partB). The OLD scheme (allmanga.to) used
+// sha256("Xot36i3lK3:v1"). We try the new key first, fall back to old.
+
+async function getOldKey() {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", enc.encode(OLD_KEY_STR));
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["decrypt"]);
+}
+
+async function decryptTobeparsed(b64, newKey) {
+  try {
+    const binaryStr = atob(b64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    if (bytes.length < 32 || bytes[0] !== 1) return null;
+    const iv = bytes.slice(1, 13);
+    const ctWithTag = bytes.slice(13);
+
+    // Try NEW key first (mkissa.to's primary path)
+    if (newKey) {
+      try {
+        const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, newKey, ctWithTag);
+        return JSON.parse(new TextDecoder().decode(plaintext));
+      } catch (e) {
+        console.log("[worker] new key decrypt failed, trying old key...");
+      }
+    }
+
+    // Fallback: OLD key (sha256("Xot36i3lK3:v1"))
+    try {
+      const oldKey = await getOldKey();
+      const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, oldKey, ctWithTag);
+      return JSON.parse(new TextDecoder().decode(plaintext));
+    } catch (e) {
+      console.error("[worker] old key decrypt also failed:", errToString(e));
+      return null;
+    }
+  } catch (err) {
+    console.error("[worker] decryptTobeparsed failed:", errToString(err));
+    return null;
+  }
+}
+
+// ─── NEW: Direct crypto implementation (no browser needed) ────────────────
+
+// Convert hex string to Uint8Array
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+// Derive the AES key from partB and the mask
+// key = XOR(atob(partB), maskBytes)  — both are 32 bytes
+// This key is used for BOTH signing requests AND decrypting tobeparsed
+async function deriveAesKey(partB) {
+  const maskBytes = hexToBytes(MASK_HEX);
+  const partBBytes = Uint8Array.from(atob(partB), (c) => c.charCodeAt(0));
+  if (partBBytes.length < 32) throw new Error("partB too short");
+  const keyBytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    keyBytes[i] = partBBytes[i] ^ maskBytes[i % maskBytes.length];
+  }
+  return crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+// Compute SHA-256 and return Uint8Array
+async function sha256(str) {
+  const data = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return new Uint8Array(hash);
+}
+
+// Build the aaReq extension (the signed request proof)
+// Mirrors mkissa.to's a0() function
+async function buildAaReq(queryHash, epoch, aesKey) {
+  const ts = Math.floor(Date.now() / 300000) * 300000; // 5-min bucket
+  const payload = JSON.stringify({ v: 1, ts, epoch, buildId: BUILD_ID, qh: queryHash });
+  // iv = SHA-256(epoch + ":" + buildId + ":" + queryHash + ":" + ts).slice(0, 12)
+  const ivSource = `${epoch}:${BUILD_ID}:${queryHash}:${ts}`;
+  const ivHash = await sha256(ivSource);
+  const iv = ivHash.slice(0, 12);
+  // Encrypt payload
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    new TextEncoder().encode(payload)
+  );
+  // Format: [0x01][iv(12)][encrypted+tag]
+  const encryptedBytes = new Uint8Array(encrypted);
+  const result = new Uint8Array(1 + 12 + encryptedBytes.length);
+  result[0] = 1;
+  result.set(iv, 1);
+  result.set(encryptedBytes, 13);
+  // Base64 encode
+  let binary = "";
+  for (let i = 0; i < result.length; i++) binary += String.fromCharCode(result[i]);
+  return btoa(binary);
+}
+
+// Fetch __aaCrypto from mkissa.to's episode page HTML
+async function fetchAaCrypto(showId, episodeString, translationType) {
+  const url = MKISSA_EPISODE_URL(showId, episodeString, translationType);
+  console.log(`[worker] fetching __aaCrypto from ${url}`);
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`mkissa.to returned HTTP ${res.status}`);
+  }
+  const html = await res.text();
+  // Extract window.__aaCrypto={...}
+  const match = html.match(/window\.__aaCrypto\s*=\s*(\{[^}]+\})/);
+  if (!match) {
+    throw new Error("__aaCrypto not found in mkissa.to page HTML");
+  }
+  const aaCrypto = JSON.parse(match[1]);
+  if (!aaCrypto.partB || !aaCrypto.epoch) {
+    throw new Error(`__aaCrypto missing required fields: ${JSON.stringify(aaCrypto)}`);
+  }
+  console.log(`[worker] __aaCrypto: epoch=${aaCrypto.epoch}, partB length=${aaCrypto.partB.length}`);
+  return aaCrypto;
+}
+
+// Compute the query hash (SHA-256 of the query string)
+async function computeQueryHash(queryStr) {
+  const hash = await sha256(queryStr);
+  // Convert to hex string
+  return Array.from(hash).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ─── In-memory cache ─────────────────────────────────────────────────────
+const responseCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getCached(key) {
+  const cached = responseCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.sources;
+  if (cached) responseCache.delete(key);
+  return null;
+}
+
+function setCached(key, sources) {
+  responseCache.set(key, { sources, expiresAt: Date.now() + CACHE_TTL_MS });
+  if (responseCache.size > 100) {
+    const oldestKey = responseCache.keys().next().value;
+    responseCache.delete(oldestKey);
+  }
+}
+
+// Cache for __aaCrypto + derived AES key (valid for the epoch duration)
+let aaCryptoCache = null; // { aaCrypto, aesKey, expiresAt }
+
+async function getAaCryptoAndKey(showId, episodeString, translationType) {
+  if (aaCryptoCache && aaCryptoCache.expiresAt > Date.now()) {
+    return aaCryptoCache;
+  }
+  const aaCrypto = await fetchAaCrypto(showId, episodeString, translationType);
+  const aesKey = await deriveAesKey(aaCrypto.partB);
+  aaCryptoCache = {
+    aaCrypto,
+    aesKey,
+    expiresAt: Date.now() + (aaCrypto.epochMs || 432000000), // 5 days default
+  };
+  return aaCryptoCache;
+}
+
+// ─── Episode resolver (direct crypto, no browser) ─────────────────────────
+
+// The EXACT query mkissa.to uses — the server expects all these fields
+// (querying for just sourceUrls causes "Cannot set properties of undefined" errors)
+const EPISODE_QUERY = `query(
+$showId: String!
+$translationType: VaildTranslationTypeEnumType!
+$episodeString: String!
+) {
+episode(
+showId: $showId
+translationType: $translationType
+episodeString: $episodeString
+) {
+episodeString
+uploadDate
+sourceUrls
+thumbnail
+notes
+show{
+_id
+name
+englishName
+nativeName
+slugTime
+thumbnail
+lastEpisodeInfo
+lastEpisodeDate
+type
+season
+score
+airedStart
+availableEpisodes
+episodeDuration
+episodeCount
+lastUpdateEnd
+characterCount
+description
+broadcastInterval
+banner
+characters
+availableEpisodesDetail
+nameOnlyString
+isAdult
+relatedShows
+relatedMangas
+altNames
+disqusIds
+}
+pageStatus{
+_id
+notes
+pageId
+showId
+views
+likesCount
+commentCount
+dislikesCount
+reviewCount
+userScoreCount
+userScoreTotalValue
+userScoreAverValue
+}
+episodeInfo{
+notes
+thumbnails
+vidInforssub
+uploadDates
+vidInforsdub
+vidInforsraw
+description
+}
+versionFix
+}
+}`;
+
+async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType) {
   const cacheKey = `${showId}:${episodeString}:${translationType}`;
 
-  // Check cache first
+  // Check cache
   const cached = getCached(cacheKey);
   if (cached) {
     console.log(`[worker] cache hit for ${cacheKey} (${cached.length} sources)`);
     return { sources: cached, cached: true, error: null };
   }
 
-  console.log(`[worker] launching browser for ${cacheKey}`);
+  console.log(`[worker] direct crypto resolve for ${cacheKey}`);
 
-  if (!env.BROWSER) {
-    return {
-      sources: null,
-      cached: false,
-      error: "Browser binding not configured — add [[browser]] binding to wrangler.toml and redeploy",
-    };
-  }
-
-  let browser;
   try {
-    browser = await puppeteer.launch(env.BROWSER);
-  } catch (err) {
-    return {
-      sources: null,
-      cached: false,
-      error: `Failed to launch browser: ${errToString(err)}. You may have hit the 10 concurrent session limit — retry in a moment.`,
+    // Step 1: Get __aaCrypto from mkissa.to (no Cloudflare challenge!)
+    const { aaCrypto, aesKey } = await getAaCryptoAndKey(showId, episodeString, translationType);
+
+    // Step 2: Compute query hash
+    const queryHash = await computeQueryHash(EPISODE_QUERY);
+    console.log(`[worker] queryHash: ${queryHash.slice(0, 16)}...`);
+
+    // Step 3: Build aaReq extension (the signed proof)
+    const aaReq = await buildAaReq(queryHash, aaCrypto.epoch, aesKey);
+    console.log(`[worker] aaReq built (length: ${aaReq.length})`);
+
+    // Step 4: POST to api.allanime.day/api with the signed request
+    const body = {
+      query: EPISODE_QUERY,
+      variables: { showId, episodeString, translationType },
+      extensions: {
+        persistedQuery: { version: 1, sha256Hash: queryHash },
+        aaReq,
+      },
     };
-  }
 
-  let page;
-  try {
-    page = await browser.newPage();
-
-    // Realistic User-Agent (Cloudflare Browser Rendering uses Linux Chrome)
-    await page.setUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    );
-
-    let sources = null;
-    let graphQLCallCount = 0;
-    let lastGraphQLError = null;
-
-    // Intercept AllAnime API responses
-    // mkissa.to's SvelteKit app POSTs to https://api.allanime.day/api (not /api/graphql)
-    // Match any request to api.allanime.day that could be a GraphQL call
-    page.on("response", async (response) => {
-      const url = response.url();
-      if (!url.includes("api.allanime.day")) return;
-      // Skip authconfigs, bootstrap, and other non-GraphQL endpoints
-      if (url.includes("/authconfigs") || url.includes("/client-crypto/")) return;
-      // Match /api, /api?, /api/graphql — any of these could carry the episode response
-      if (!url.includes("/api") && !url.includes("/graphql")) return;
-
-      graphQLCallCount++;
-      console.log(`[worker] GraphQL call #${graphQLCallCount}: ${response.status()} ${url.slice(0, 100)}...`);
-
-      try {
-        const text = await response.text();
-        const json = JSON.parse(text);
-
-        // Check for errors
-        if (json.errors) {
-          lastGraphQLError = json.errors[0]?.message || "unknown GraphQL error";
-          console.log(`[worker] GraphQL error: ${lastGraphQLError}`);
-        }
-
-        // Extract sourceUrls from tobeparsed (encrypted) or cleartext
-        if (json.data?.tobeparsed) {
-          const decrypted = await decryptTobeparsed(json.data.tobeparsed);
-          if (decrypted?.episode?.sourceUrls) {
-            sources = decrypted.episode.sourceUrls;
-            console.log(`[worker] decrypted tobeparsed — ${sources.length} sources`);
-          }
-        } else if (json.data?.episode?.sourceUrls) {
-          sources = json.data.episode.sourceUrls;
-          console.log(`[worker] got cleartext sourceUrls — ${sources.length} sources`);
-        }
-      } catch (e) {
-        console.log(`[worker] response parse error: ${errToString(e)}`);
-      }
+    const res = await fetch(ALLANIME_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://mkissa.to/",
+        "Origin": "https://mkissa.to",
+        "x-build-id": BUILD_ID,
+      },
+      body: JSON.stringify(body),
     });
 
-    // Navigate to the episode page on mkissa.to (NOT allmanga.to)
-    // mkissa.to is AllAnime's new SvelteKit frontend. Unlike allmanga.to which
-    // has Cloudflare's interactive "Just a moment..." challenge that blocks
-    // Browser Rendering, mkissa.to returns 200 directly — no challenge!
-    // The SvelteKit app uses a new crypto scheme (__aaCrypto.partB embedded in
-    // the page HTML) that replaces the Turnstile captcha entirely. The app
-    // encrypts the GraphQL request with partB-derived key, the server returns
-    // tobeparsed encrypted with the SAME old key (sha256("Xot36i3lK3:v1"))
-    // which our decryptTobeparsed() already handles.
-    const episodeUrl = `https://mkissa.to/watch/${showId}/p-${episodeString}-${translationType}`;
-    console.log(`[worker] navigating to ${episodeUrl}`);
+    if (!res.ok) {
+      const text = await res.text();
+      return { sources: null, error: `AllAnime API HTTP ${res.status}: ${text.slice(0, 200)}` };
+    }
 
-    try {
-      // Use networkidle2 instead of domcontentloaded — waits for SvelteKit
-      // to finish booting and making API calls
-      await page.goto(episodeUrl, {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
-    } catch (err) {
-      console.warn(`[worker] initial goto error: ${errToString(err)}`);
-      // Try again with domcontentloaded as fallback
-      try {
-        await page.goto(episodeUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 20000,
-        });
-      } catch (err2) {
-        console.warn(`[worker] fallback goto also failed: ${errToString(err2)}`);
+    const json = await res.json();
+
+    if (json.errors && json.errors[0]) {
+      const err = json.errors[0];
+      // If crypto is rejected, clear the cache so next call re-fetches __aaCrypto
+      if (err.extensions?.code?.startsWith("AA_CRYPTO")) {
+        aaCryptoCache = null;
       }
+      return { sources: null, error: `AllAnime GraphQL: ${err.message} (${err.extensions?.code})` };
     }
 
-    // mkissa.to doesn't have Cloudflare challenge, but check page title anyway
-    let challengePassed = false;
-    try {
-      const title = await page.title();
-      if (title && !title.includes("Just a moment")) {
-        challengePassed = true;
-        console.log(`[worker] page loaded — title: "${title}"`);
-      } else {
-        // Wait for challenge to clear (unlikely on mkissa.to, but just in case)
-        await page.waitForFunction(
-          () => document.title !== "Just a moment..." && !document.title.includes("Just a moment"),
-          { timeout: 15000 }
-        );
-        challengePassed = true;
-        console.log("[worker] challenge cleared — page title:", await page.title());
+    // Step 5: Decrypt tobeparsed (try new key first, old key as fallback)
+    if (json.data?.tobeparsed) {
+      const decrypted = await decryptTobeparsed(json.data.tobeparsed, aesKey);
+      const sources = decrypted?.episode?.sourceUrls ?? [];
+      if (sources.length === 0) {
+        return { sources: null, error: "tobeparsed decrypted but no sourceUrls" };
       }
-    } catch (err) {
-      console.warn("[worker] page title check failed:", errToString(err));
-    }
-
-    // Wait for sourceUrls to be captured (SvelteKit app auto-fetches them on load)
-    const maxWaitMs = 25000;
-    const startWait = Date.now();
-    while (!sources && Date.now() - startWait < maxWaitMs) {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    if (sources && sources.length > 0) {
-      const durationMs = Date.now() - startWait;
-      console.log(`[worker] success — ${sources.length} sources captured in ${durationMs}ms`);
+      console.log(`[worker] success — ${sources.length} sources`);
       setCached(cacheKey, sources);
-      return { sources, cached: false, error: null, durationMs, graphQLCalls: graphQLCallCount };
-    } else {
-      const pageTitle = await page.title().catch(() => "unknown");
-      const errorMsg = `Failed to capture sources. Challenge passed: ${challengePassed}. Page title: "${pageTitle}". GraphQL calls: ${graphQLCallCount}. Last GraphQL error: ${lastGraphQLError || "none"}`;
-      console.warn(`[worker] ${errorMsg}`);
-      return {
-        sources: null,
-        cached: false,
-        error: errorMsg,
-        graphQLCalls: graphQLCallCount,
-        challengePassed,
-        pageTitle,
-      };
+      return { sources, cached: false, error: null };
     }
+
+    if (json.data?.episode?.sourceUrls) {
+      const sources = json.data.episode.sourceUrls;
+      console.log(`[worker] success (cleartext) — ${sources.length} sources`);
+      setCached(cacheKey, sources);
+      return { sources, cached: false, error: null };
+    }
+
+    return { sources: null, error: "No sourceUrls in response" };
   } catch (err) {
-    console.error("[worker] unexpected error:", err);
-    return { sources: null, cached: false, error: `Unexpected error: ${errToString(err)}` };
-  } finally {
-    // Always close the browser to free up the session slot
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (e) {
-        console.warn("[worker] failed to close browser:", errToString(e));
-      }
-    }
+    return { sources: null, error: `Direct crypto failed: ${errToString(err)}` };
   }
 }
 
-// ─── Stream proxy (existing, unchanged) ───────────────────────────────────
+// ─── Stream proxy (unchanged) ─────────────────────────────────────────────
 
 async function proxyStream(url, headers, clientRequest) {
-  if (!isAllowedHost(url)) {
-    return jsonError("Host not allowed by proxy", 403);
-  }
-
+  if (!isAllowedHost(url)) return jsonError("Host not allowed by proxy", 403);
   const upstreamHeaders = {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
     Accept: "*/*",
     ...(headers ?? {}),
   };
-
   if (clientRequest) {
     for (const h of FORWARD_REQUEST_HEADERS) {
       const v = clientRequest.headers.get(h);
       if (v) upstreamHeaders[h] = v;
     }
   }
-
   try {
-    const upstream = await fetch(url, {
-      headers: upstreamHeaders,
-      redirect: "follow",
-    });
-
+    const upstream = await fetch(url, { headers: upstreamHeaders, redirect: "follow" });
     const respHeaders = new Headers(CORS_HEADERS);
     for (const h of FORWARD_RESPONSE_HEADERS) {
       const v = upstream.headers.get(h);
       if (v) respHeaders.set(h, v);
     }
-
     const contentType = upstream.headers.get("content-type") || "";
     const urlLower = url.toLowerCase();
-    if (
-      (contentType.indexOf("octet-stream") >= 0 || !contentType) &&
-      (urlLower.indexOf(".mp4") >= 0 || urlLower.indexOf("/media") >= 0)
-    ) {
+    if ((contentType.indexOf("octet-stream") >= 0 || !contentType) &&
+        (urlLower.indexOf(".mp4") >= 0 || urlLower.indexOf("/media") >= 0)) {
       respHeaders.set("content-type", "video/mp4");
     }
-
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: respHeaders,
     });
   } catch (err) {
-    const msg = (err && err.message) || "Unknown proxy error";
-    return jsonError(msg, 502);
+    return jsonError(errToString(err), 502);
   }
 }
 
@@ -436,59 +454,44 @@ const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
         headers: {
           "access-control-allow-origin": "*",
           "access-control-allow-methods": "GET, OPTIONS",
-          "access-control-allow-headers":
-            "range, content-type, if-range, if-modified-since",
+          "access-control-allow-headers": "range, content-type, if-range, if-modified-since",
           "access-control-max-age": "86400",
         },
       });
     }
 
-    // ─── AllAnime episode resolver endpoint ───
-    // GET /allanime/episode?showId=...&episodeString=...&translationType=sub|dub
+    // ─── AllAnime episode resolver (direct crypto, no browser) ───
     if (url.pathname === "/allanime/episode") {
-      if (request.method !== "GET") {
-        return jsonError("Method not allowed - use GET", 405);
-      }
+      if (request.method !== "GET") return jsonError("Method not allowed - use GET", 405);
 
       const showId = url.searchParams.get("showId");
       const episodeString = url.searchParams.get("episodeString");
       const translationType = url.searchParams.get("translationType") || "sub";
 
-      if (!showId || !episodeString) {
-        return jsonError("Missing showId or episodeString", 400);
-      }
+      if (!showId || !episodeString) return jsonError("Missing showId or episodeString", 400);
       if (translationType !== "sub" && translationType !== "dub") {
         return jsonError("translationType must be 'sub' or 'dub'", 400);
       }
 
-      const result = await fetchAllAnimeEpisodeViaBrowser(
-        showId,
-        episodeString,
-        translationType,
-        env
-      );
+      const result = await fetchAllAnimeEpisodeDirect(showId, episodeString, translationType);
 
       return new Response(
         JSON.stringify({
           sources: result.sources,
           ...(result.cached ? { cached: true } : {}),
           ...(result.error ? { error: result.error } : {}),
-          ...(result.durationMs ? { durationMs: result.durationMs } : {}),
-          ...(result.graphQLCalls ? { graphQLCalls: result.graphQLCalls } : {}),
         }),
         {
           status: result.error && !result.sources ? 502 : 200,
           headers: {
             "content-type": "application/json",
             "access-control-allow-origin": "*",
-            // Cache successful responses for 5 min — episode sources don't change often
             "cache-control": result.sources
               ? "public, max-age=300, s-maxage=600, stale-while-revalidate=3600"
               : "no-store",
@@ -498,9 +501,7 @@ const worker = {
     }
 
     // ─── Health check / stream proxy ───
-    if (request.method !== "GET") {
-      return jsonError("Method not allowed - use GET", 405);
-    }
+    if (request.method !== "GET") return jsonError("Method not allowed - use GET", 405);
 
     const target = url.searchParams.get("url");
     if (!target) {
@@ -508,51 +509,33 @@ const worker = {
         JSON.stringify({
           ok: true,
           service: "xan-stream-proxy",
-          version: 4,
-          browserRendering: !!env.BROWSER,
+          version: 5,
+          mode: "direct-crypto", // No browser needed!
           endpoints: {
             "/": "Stream proxy. Pass ?url=<stream_url>&h_Referer=... to proxy a request.",
             "/allanime/episode":
-              "AllAnime episode resolver (uses Cloudflare Browser Rendering — free, no external solver). Pass ?showId=...&episodeString=...&translationType=sub|dub.",
+              "AllAnime episode resolver (direct crypto — no browser needed). Pass ?showId=...&episodeString=...&translationType=sub|dub.",
           },
           cacheSize: responseCache.size,
           allowedHosts: ALLOWED_HOSTS.length,
         }),
         {
           status: 200,
-          headers: {
-            "content-type": "application/json",
-            "access-control-allow-origin": "*",
-          },
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
         }
       );
     }
 
     if (!isAllowedHost(target)) {
-      return jsonError(
-        "Host not allowed: " + (function () {
-          try {
-            return new URL(target).hostname;
-          } catch (e) {
-            return "invalid-url";
-          }
-        })(),
-        403
-      );
+      return jsonError("Host not allowed: " + (function(){try{return new URL(target).hostname}catch{return"invalid-url"}})(), 403);
     }
 
     const customHeaders = {};
     url.searchParams.forEach(function (v, k) {
-      if (k.indexOf("h_") === 0) {
-        customHeaders[k.slice(2)] = v;
-      }
+      if (k.indexOf("h_") === 0) customHeaders[k.slice(2)] = v;
     });
 
-    return proxyStream(
-      target,
-      Object.keys(customHeaders).length > 0 ? customHeaders : undefined,
-      request
-    );
+    return proxyStream(target, Object.keys(customHeaders).length > 0 ? customHeaders : undefined, request);
   },
 };
 

@@ -4,30 +4,18 @@
 name = "xan-stream-proxy"
 main = "worker.js"
 compatibility_date = "2024-12-01"
-# @cloudflare/puppeteer uses node:buffer and node:stream — needs nodejs_compat
-compatibility_flags = ["nodejs_compat"]
 
-# ─── Browser Rendering binding ───────────────────────────────────────────
-# This gives the Worker access to a managed Chrome browser on Cloudflare's
-# edge, used to solve AllAnime's Turnstile captcha automatically.
+# v5: No browser binding needed! The Worker implements AllAnime's crypto
+# scheme directly using Web Crypto API. Faster, simpler, no browser CPU limits.
 #
-# Free tier limits (no payment needed):
-#   - 10 minutes/day of browser CPU time
-#   - 10 concurrent browser sessions
-#   - 60 seconds max per browser session
+# v4 used Browser Rendering which:
+#   - Was slow (20-40s per request — Chrome cold-start)
+#   - Hit Cloudflare's "Just a moment..." challenge on allmanga.to
+#   - Was limited to 10 min browser CPU/day on free tier
 #
-# For an anime streaming site, 10 min/day covers ~20-60 uncached solves,
-# which with 5-min caching = 100-300 episodes/day. Plenty for personal use.
-#
-# Docs: https://developers.cloudflare.com/browser-rendering/get-started/
-#
-# ⚠️ Wrangler v3 expects `browser` as a single object (not an array).
-#    Wrangler v4+ uses the `[[browser]]` array syntax. This file uses the
-#    v3-compatible form so it works with the wrangler pre-installed on
-#    GitHub Actions runners. If you upgrade to wrangler v4+, you can switch
-#    to `[[browser]]` if needed (both syntaxes work in v4).
-[browser]
-binding = "BROWSER"
+# v5 fetches __aaCrypto from mkissa.to (which has no Cloudflare challenge),
+# derives the AES key, signs the GraphQL request, and decrypts the response —
+# all in pure Web Crypto. ~1-2s per request, no browser needed.
 
 # Workers don't need a "routes" section — they automatically get a URL at:
 #   https://xan-stream-proxy.<your-account-subdomain>.workers.dev
@@ -36,7 +24,5 @@ binding = "BROWSER"
 # in your Vercel project's environment variables.
 
 # ─── No secrets required! ────────────────────────────────────────────────
-# Unlike the previous (v3) version which required SOLVER_API_KEY for
-# 2captcha/CapSolver, this v4 version uses Cloudflare Browser Rendering
-# (included in the Workers free tier). No external service, no API key,
-# no payment.
+# No SOLVER_API_KEY, no browser binding, no external service.
+# Just `wrangler deploy` and you're done.
