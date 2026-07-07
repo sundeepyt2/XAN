@@ -295,13 +295,9 @@ async function fetchGogoanimeSourcesServerSide(
 }
 
 // ✅ Fetch AllAnime sources via the CF Worker.
-// All sources are returned as iframe embeds — the embed pages (bysekoze.com,
-// vidnest.io, mp4upload, ok.ru, allanime.uns.bio) are JavaScript-rendered
-// and can't be scraped server-side. The browser's iframe element loads them
-// and the embed page's JS renders the video player.
-//
-// Sources that decode to /apivtwo/clock (Luf-Mp4, Ak) are skipped — the
-// clock.json endpoint is dead (HTTP 500) as of mid-2026.
+// - mp4upload sources → scrape embed page for direct .mp4 URL (plays in custom player)
+// - Other sources (Fm-Hls, Vn-Hls, Ok, Uni) → return as iframe (JS-rendered embeds)
+// - Luf-Mp4/Ak → skipped (clock.json endpoint is dead)
 //
 // All sources are tagged provider: "allanime".
 async function fetchIsekai2ndSourcesServerSide(
@@ -321,28 +317,43 @@ async function fetchIsekai2ndSourcesServerSide(
     const rawSources = await fetchIsekai2ndSources(show._id, String(episode), mode);
     if (rawSources.length === 0) return [];
 
-    // Step 3: Decode URLs and return as iframe sources
-    // - Direct URLs (https://...) → return as iframe
-    // - XOR-encoded ("--...") → decode with decodeUrl()
-    //   - If decoded to /apivtwo/clock → skip (endpoint is dead)
-    //   - If decoded to https://... → return as iframe
+    // Step 3: Process each source
     const sources: UnifiedSource[] = [];
     let skippedClockSources = 0;
 
     for (const s of rawSources) {
       const decodedUrl = decodeUrl(s.url);
 
-      // Skip dead clock.json sources (Luf-Mp4, Ak) — endpoint returns 500
+      // Skip dead clock.json sources (Luf-Mp4, Ak)
       if (decodedUrl.startsWith("/apivtwo/")) {
         skippedClockSources++;
         continue;
       }
 
-      // Only return absolute URLs (http/https) — relative paths can't load in iframe
-      if (!decodedUrl.startsWith("http")) {
-        continue;
+      // Only process absolute URLs
+      if (!decodedUrl.startsWith("http")) continue;
+
+      // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL
+      // The embed page contains: src: "https://a4.mp4upload.com:183/d/.../video.mp4"
+      // This direct URL supports seeking (206 Partial Content) and plays in
+      // XAN's custom video player. Needs Referer header (player uses cf-proxy tier).
+      if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
+        const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
+        if (directMp4) {
+          sources.push({
+            url: directMp4,
+            type: "mp4",
+            quality: null,
+            sourceName: s.sourceName,
+            headers: { Referer: "https://www.mp4upload.com/" },
+            provider: "allanime",
+          });
+          continue; // skip the iframe fallback below
+        }
+        // If scraping failed, fall through to iframe
       }
 
+      // All other sources → iframe (JS-rendered embed pages)
       sources.push({
         url: decodedUrl,
         type: "iframe",
@@ -356,11 +367,53 @@ async function fetchIsekai2ndSourcesServerSide(
     if (skippedClockSources > 0) {
       console.log(`[stream] AllAnime: skipped ${skippedClockSources} dead clock.json sources (Luf-Mp4/Ak)`);
     }
-    console.log(`[stream] AllAnime: ${sources.length} playable iframe sources`);
+    console.log(`[stream] AllAnime: ${sources.length} playable sources (${sources.filter(s=>s.type==="mp4").length} direct MP4, ${sources.filter(s=>s.type==="iframe").length} iframe)`);
     return sources;
   } catch (err) {
     console.warn("[stream] AllAnime (via Worker) fetch failed:", err);
     return [];
+  }
+}
+
+// ✅ Scrape mp4upload embed page to extract the direct .mp4 URL
+// The embed page (https://www.mp4upload.com/embed-<id>.html) contains:
+//   src: "https://a4.mp4upload.com:183/d/<hash>/video.mp4"
+// This URL supports Range requests (seeking) and plays in XAN's custom player.
+// Returns null if scraping fails (caller falls back to iframe).
+async function scrapeMp4UploadDirectUrl(embedUrl: string): Promise<string | null> {
+  try {
+    // Follow redirects (mp4upload.com → www.mp4upload.com)
+    const res = await fetch(embedUrl, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+
+    // Extract: src: "https://a4.mp4upload.com:183/d/.../video.mp4"
+    const match = html.match(/src:\s*"(https:\/\/[^"]+\.mp4)"/);
+    if (match && match[1]) {
+      console.log(`[stream] mp4upload: extracted direct MP4 URL`);
+      return match[1];
+    }
+
+    // Fallback: look for any .mp4 URL in the HTML
+    const fallback = html.match(/(https:\/\/[^"'\s<>]+\.mp4)/);
+    if (fallback && fallback[1]) {
+      console.log(`[stream] mp4upload: found MP4 URL (fallback pattern)`);
+      return fallback[1];
+    }
+
+    console.warn("[stream] mp4upload: no direct MP4 URL found in embed page");
+    return null;
+  } catch (err) {
+    console.warn("[stream] mp4upload scrape failed:", err);
+    return null;
   }
 }
 
