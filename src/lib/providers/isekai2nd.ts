@@ -72,7 +72,12 @@ export async function fetchIsekai2ndSources(
   }
 
   const backend = freeSolverUrl ? "free-solver" : "cf-worker";
-  const endpoint = `${solverUrl}/allanime/episode`;
+  // ✅ Strip trailing slash from solver URL to avoid double-slash bug
+  // (e.g., "https://x.workers.dev//allanime/episode" → "https://x.workers.dev/allanime/episode")
+  // Double slashes cause Cloudflare Workers to return the root handler
+  // (health check JSON) instead of the /allanime/episode handler.
+  const baseUrl = solverUrl.replace(/\/+$/, "");
+  const endpoint = `${baseUrl}/allanime/episode`;
   const params = new URLSearchParams({
     showId,
     episodeString: episodeStr,

@@ -369,7 +369,9 @@ export async function getEpisodeSources(
         console.warn(
           `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver...`,
         );
-        const epEndpoint = `${solverUrl}/allanime/episode?` +
+        // ✅ Strip trailing slash to avoid double-slash bug (//allanime/episode)
+        const baseUrl = solverUrl.replace(/\/+$/, "");
+        const epEndpoint = `${baseUrl}/allanime/episode?` +
           new URLSearchParams({
             showId,
             episodeString: episodeStr,
