@@ -295,91 +295,124 @@ async function fetchGogoanimeSourcesServerSide(
 }
 
 // ✅ Fetch AllAnime sources via the CF Worker.
-// - mp4upload sources → scrape embed page for direct .mp4 URL (plays in custom player)
-// - Other sources (Fm-Hls, Vn-Hls, Ok, Uni) → return as iframe (JS-rendered embeds)
-// - Luf-Mp4/Ak → skipped (clock.json endpoint is dead)
+// - If dub is requested but no dub episodes available → auto-fallback to sub
+// - mp4upload sources → scrape embed page for direct .mp4 URL, pre-wrap with CF Worker
+// - Other sources (Fm-Hls, Vn-Hls, Ok, Uni) → iframe embeds
+// - Luf-Mp4/Ak → skipped (clock.json endpoint dead)
 //
-// All sources are tagged provider: "allanime".
+// Returns { sources, fellBackToSub } so the caller can notify the client.
 async function fetchIsekai2ndSourcesServerSide(
   anilistId: number,
   title: string,
   episode: number,
   mode: "sub" | "dub",
-): Promise<UnifiedSource[]> {
-  if (!title.trim()) return [];
+): Promise<{ sources: UnifiedSource[]; fellBackToSub: boolean }> {
+  if (!title.trim()) return { sources: [], fellBackToSub: false };
 
   try {
     // Step 1: Find AllAnime showId (search is public, no captcha)
     const show = await findShowByAniListId(anilistId, title);
-    if (!show?._id) return [];
+    if (!show?._id) return { sources: [], fellBackToSub: false };
+
+    // ✅ Dub→Sub auto-fallback: check availableEpisodes before calling the Worker.
+    // If dub is requested but the show has 0 dub episodes, skip straight to sub.
+    // This saves a Worker round-trip and gives instant fallback.
+    let effectiveMode = mode;
+    if (mode === "dub") {
+      const dubCount = show.availableEpisodes?.dub ?? 0;
+      if (dubCount === 0) {
+        console.log(`[stream] AllAnime: no dub episodes available (dub=0), falling back to sub`);
+        effectiveMode = "sub";
+      } else if (episode > dubCount) {
+        console.log(`[stream] AllAnime: episode ${episode} not available in dub (only ${dubCount} dub eps), falling back to sub`);
+        effectiveMode = "sub";
+      }
+    }
 
     // Step 2: Fetch raw sourceUrls via the CF Worker
-    const rawSources = await fetchIsekai2ndSources(show._id, String(episode), mode);
-    if (rawSources.length === 0) return [];
-
-    // Step 3: Process each source
-    const sources: UnifiedSource[] = [];
-    let skippedClockSources = 0;
-
-    for (const s of rawSources) {
-      const decodedUrl = decodeUrl(s.url);
-
-      // Skip dead clock.json sources (Luf-Mp4, Ak)
-      if (decodedUrl.startsWith("/apivtwo/")) {
-        skippedClockSources++;
-        continue;
-      }
-
-      // Only process absolute URLs
-      if (!decodedUrl.startsWith("http")) continue;
-
-      // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL, then
-      // pre-wrap with CF Worker proxy URL so the player loads it on the first
-      // try (no failed "direct" attempt → no fallback delay).
-      // The Worker adds the Referer header that mp4upload requires.
-      if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
-        const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
-        if (directMp4) {
-          // Pre-wrap with CF Worker proxy — player loads this URL directly,
-          // no tier cascade needed. Worker streams the video with Referer.
-          const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL?.replace(/\/+$/, "");
-          const finalUrl = workerUrl
-            ? `${workerUrl}/?url=${encodeURIComponent(directMp4)}&h_Referer=${encodeURIComponent("https://www.mp4upload.com/")}`
-            : directMp4; // fallback: raw URL (player will try cf-proxy tier)
-
-          sources.push({
-            url: finalUrl,
-            type: "mp4",
-            quality: null,
-            sourceName: s.sourceName,
-            // No headers needed — CF Worker adds Referer automatically
-            provider: "allanime",
-          });
-          continue; // skip the iframe fallback below
+    const rawSources = await fetchIsekai2ndSources(show._id, String(episode), effectiveMode);
+    if (rawSources.length === 0) {
+      // ✅ If we tried dub and got 0 sources, try sub as fallback
+      if (effectiveMode === "dub") {
+        console.log(`[stream] AllAnime: dub returned 0 sources, trying sub...`);
+        const subSources = await fetchIsekai2ndSources(show._id, String(episode), "sub");
+        if (subSources.length === 0) {
+          return { sources: [], fellBackToSub: false };
         }
-        // If scraping failed, fall through to iframe
+        // Process the sub sources
+        const processed = processAllAnimeSources(subSources);
+        return { sources: processed, fellBackToSub: true };
       }
-
-      // All other sources → iframe (JS-rendered embed pages)
-      sources.push({
-        url: decodedUrl,
-        type: "iframe",
-        quality: s.quality,
-        sourceName: s.sourceName,
-        headers: s.headers,
-        provider: "allanime",
-      });
+      return { sources: [], fellBackToSub: false };
     }
 
-    if (skippedClockSources > 0) {
-      console.log(`[stream] AllAnime: skipped ${skippedClockSources} dead clock.json sources (Luf-Mp4/Ak)`);
-    }
-    console.log(`[stream] AllAnime: ${sources.length} playable sources (${sources.filter(s=>s.type==="mp4").length} direct MP4, ${sources.filter(s=>s.type==="iframe").length} iframe)`);
-    return sources;
+    // Step 3: Process sources
+    const sources = processAllAnimeSources(rawSources);
+    const fellBackToSub = mode === "dub" && effectiveMode === "sub";
+    return { sources, fellBackToSub };
   } catch (err) {
     console.warn("[stream] AllAnime (via Worker) fetch failed:", err);
-    return [];
+    return { sources: [], fellBackToSub: false };
   }
+}
+
+// ✅ Process raw AllAnime sources from the Worker into playable UnifiedSource[]
+// Handles: XOR-decoding, mp4upload direct MP4 extraction, dead source skipping
+async function processAllAnimeSources(rawSources: Array<{ url: string; sourceName: string; quality: string | null; type: string; headers?: Record<string, string> }>): Promise<UnifiedSource[]> {
+  const sources: UnifiedSource[] = [];
+  let skippedClockSources = 0;
+
+  for (const s of rawSources) {
+    const decodedUrl = decodeUrl(s.url);
+
+    // Skip dead clock.json sources (Luf-Mp4, Ak)
+    if (decodedUrl.startsWith("/apivtwo/")) {
+      skippedClockSources++;
+      continue;
+    }
+
+    // Only process absolute URLs
+    if (!decodedUrl.startsWith("http")) continue;
+
+    // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL, then
+    // pre-wrap with CF Worker proxy URL so the player loads it on the first
+    // try (no failed "direct" attempt → no fallback delay).
+    if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
+      const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
+      if (directMp4) {
+        const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL?.replace(/\/+$/, "");
+        const finalUrl = workerUrl
+          ? `${workerUrl}/?url=${encodeURIComponent(directMp4)}&h_Referer=${encodeURIComponent("https://www.mp4upload.com/")}`
+          : directMp4;
+
+        sources.push({
+          url: finalUrl,
+          type: "mp4",
+          quality: null,
+          sourceName: s.sourceName,
+          provider: "allanime",
+        });
+        continue;
+      }
+      // If scraping failed, fall through to iframe
+    }
+
+    // All other sources → iframe (JS-rendered embed pages)
+    sources.push({
+      url: decodedUrl,
+      type: "iframe",
+      quality: s.quality,
+      sourceName: s.sourceName,
+      headers: s.headers,
+      provider: "allanime",
+    });
+  }
+
+  if (skippedClockSources > 0) {
+    console.log(`[stream] AllAnime: skipped ${skippedClockSources} dead clock.json sources (Luf-Mp4/Ak)`);
+  }
+  console.log(`[stream] AllAnime: ${sources.length} playable sources (${sources.filter(s=>s.type==="mp4").length} direct MP4, ${sources.filter(s=>s.type==="iframe").length} iframe)`);
+  return sources;
 }
 
 // ✅ Scrape mp4upload embed page to extract the direct .mp4 URL
@@ -505,29 +538,31 @@ export async function GET(
   }
 
   // ─── 2. Zen, Koto, Pahe, Gogoanime, Isekai2nd (in parallel, non-blocking) ───
-  const [zenSources, paheSources, gogoSources, isekai2ndSources] = await Promise.all([
+  const [zenSources, paheSources, gogoSources, isekai2ndResult] = await Promise.all([
     fetchZenSourcesServerSide(animeId, episode),
     fetchPaheSourcesServerSide(malId, episode, requestedMode),
     fetchGogoanimeSourcesServerSide(title, episode),
     fetchIsekai2ndSourcesServerSide(animeId, title, episode, requestedMode),
   ]);
 
+  // ✅ Destructure: fetchIsekai2ndSourcesServerSide returns { sources, fellBackToSub }
+  const isekai2ndSources = isekai2ndResult.sources;
+  const fellBackToSub = isekai2ndResult.fellBackToSub;
+
   // Koto is just a URL builder — no fetch needed
   const kotoSource = getKotoSource(animeId, episode, requestedMode);
 
   // ─── 3. Merge all sources ───
   const rawMerged: UnifiedSource[] = [
-    ...isekai2ndSources, // isekai2nd first (highest priority — working AllAnime path via CF Worker)
-    ...allanimeSources, // regular AllAnime (empty when Worker is configured — skipped to avoid duplicates)
+    ...isekai2ndSources, // AllAnime sources via CF Worker (highest priority)
+    ...allanimeSources, // old path (empty when Worker is configured)
     ...zenSources,
     kotoSource,
     ...paheSources,
     ...gogoSources,
   ];
 
-  // ✅ Deduplicate by sourceName — if two sources have the same sourceName,
-  // keep only the first one (highest priority). This prevents duplicate "Mp4"
-  // entries (one direct, one proxied) from appearing in the Sources panel.
+  // ✅ Deduplicate by sourceName
   const seenNames = new Set<string>();
   const mergedSources: UnifiedSource[] = rawMerged.filter((s) => {
     const name = s.sourceName ?? "";
@@ -549,8 +584,8 @@ export async function GET(
       episodeTitle: `Episode ${episode}`,
       thumbnail: null,
       provider: picked.provider,
-      // ✅ If AllAnime fell back from dub to sub
-      ...(requestedMode === "dub" && allanimeMode === "sub"
+      // ✅ If dub was requested but fell back to sub, notify the client
+      ...(fellBackToSub
         ? { fallbackMode: "dub unavailable, fell back to sub" }
         : {}),
       failures: allanimeFailures,
