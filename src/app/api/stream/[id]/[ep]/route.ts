@@ -456,7 +456,15 @@ export async function GET(
   let allanimeMode: "sub" | "dub" | null = null;
 
   // ─── 1. AllAnime (primary) ───
-  if (!allowDemo && title) {
+  // ✅ Skip the old direct-AllAnime path entirely when the CF Worker is
+  //    configured — the Isekai2nd provider (step 2) already fetches sources
+  //    via the Worker. Running both produces DUPLICATE sources (e.g., two
+  //    "Mp4" entries — one direct, one proxied) that confuse the user.
+  //    The old path's AA_CRYPTO_MISSING fallback also calls the Worker, so
+  //    it's completely redundant.
+  const CF_WORKER_CONFIGURED = !!(process.env.NEXT_PUBLIC_CF_WORKER_URL || process.env.NEXT_PUBLIC_FREE_SOLVER_URL);
+
+  if (!allowDemo && title && !CF_WORKER_CONFIGURED) {
     try {
       const show = await findShowByAniListId(animeId, title);
       if (show) {
@@ -508,14 +516,28 @@ export async function GET(
   const kotoSource = getKotoSource(animeId, episode, requestedMode);
 
   // ─── 3. Merge all sources ───
-  const mergedSources: UnifiedSource[] = [
+  const rawMerged: UnifiedSource[] = [
     ...isekai2ndSources, // isekai2nd first (highest priority — working AllAnime path via CF Worker)
-    ...allanimeSources, // regular AllAnime (will be empty if captcha is enforced)
+    ...allanimeSources, // regular AllAnime (empty when Worker is configured — skipped to avoid duplicates)
     ...zenSources,
     kotoSource,
     ...paheSources,
     ...gogoSources,
   ];
+
+  // ✅ Deduplicate by sourceName — if two sources have the same sourceName,
+  // keep only the first one (highest priority). This prevents duplicate "Mp4"
+  // entries (one direct, one proxied) from appearing in the Sources panel.
+  const seenNames = new Set<string>();
+  const mergedSources: UnifiedSource[] = rawMerged.filter((s) => {
+    const name = s.sourceName ?? "";
+    if (seenNames.has(name)) {
+      console.log(`[stream] dedup: skipping duplicate "${name}"`);
+      return false;
+    }
+    seenNames.add(name);
+    return true;
+  });
 
   // ─── 4. Return the merged response ───
   if (mergedSources.length > 0) {
