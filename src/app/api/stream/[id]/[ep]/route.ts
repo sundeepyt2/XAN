@@ -16,7 +16,7 @@ import { NextResponse } from "next/server";
 import {
   findShowByAniListId,
   extractStreamUrl,
-  extractSource,
+  decodeUrl,
   type StreamResult,
 } from "@/lib/allanime";
 import { fetchConsumetStream, getConsumetConfig } from "@/lib/consumet";
@@ -294,13 +294,16 @@ async function fetchGogoanimeSourcesServerSide(
   return [];
 }
 
-// ✅ Fetch AllAnime sources via the CF Worker — resolves all source types
-// including clock.json-based sources (Luf-Mp4, Ak, S-mp4 equivalent) and
-// embed-page sources (Fm-Hls, Vn-Hls, Mp4). Uses extractSource() from
-// allanime.ts to decode XOR-encoded URLs and fetch actual stream URLs.
+// ✅ Fetch AllAnime sources via the CF Worker.
+// All sources are returned as iframe embeds — the embed pages (bysekoze.com,
+// vidnest.io, mp4upload, ok.ru, allanime.uns.bio) are JavaScript-rendered
+// and can't be scraped server-side. The browser's iframe element loads them
+// and the embed page's JS renders the video player.
 //
-// All sources are tagged provider: "allanime" so they show under the
-// "AllAnime" section in the SourceSwitcher.
+// Sources that decode to /apivtwo/clock (Luf-Mp4, Ak) are skipped — the
+// clock.json endpoint is dead (HTTP 500) as of mid-2026.
+//
+// All sources are tagged provider: "allanime".
 async function fetchIsekai2ndSourcesServerSide(
   anilistId: number,
   title: string,
@@ -314,51 +317,47 @@ async function fetchIsekai2ndSourcesServerSide(
     const show = await findShowByAniListId(anilistId, title);
     if (!show?._id) return [];
 
-    // Step 2: Fetch raw sourceUrls via the CF Worker (which handles captcha)
+    // Step 2: Fetch raw sourceUrls via the CF Worker
     const rawSources = await fetchIsekai2ndSources(show._id, String(episode), mode);
     if (rawSources.length === 0) return [];
 
-    console.log(`[stream] AllAnime Worker returned ${rawSources.length} raw sources, resolving...`);
+    // Step 3: Decode URLs and return as iframe sources
+    // - Direct URLs (https://...) → return as iframe
+    // - XOR-encoded ("--...") → decode with decodeUrl()
+    //   - If decoded to /apivtwo/clock → skip (endpoint is dead)
+    //   - If decoded to https://... → return as iframe
+    const sources: UnifiedSource[] = [];
+    let skippedClockSources = 0;
 
-    // Step 3: Resolve each raw sourceUrl using extractSource()
-    // extractSource() handles:
-    //   - XOR-encoded URLs ("--...") → decodes, then dispatches
-    //   - /apivtwo/clock?id=... → fetches clock.json, returns actual stream URLs
-    //   - Direct embed URLs (bysekoze.com, mp4upload, ok.ru) → scrapes or returns iframe
-    //   - iframe sources (Uni, Sw) → returns as-is
-    const resolvedSources: UnifiedSource[] = [];
+    for (const s of rawSources) {
+      const decodedUrl = decodeUrl(s.url);
 
-    // Process sources in parallel for speed
-    const results = await Promise.allSettled(
-      rawSources.map(async (s) => {
-        try {
-          const extracted = await extractSource(s.url, s.sourceName);
-          if (extracted && extracted.length > 0) {
-            return extracted.map((stream) => ({
-              url: stream.url,
-              type: stream.type,
-              quality: stream.quality,
-              sourceName: stream.sourceName,
-              headers: stream.headers,
-              provider: "allanime" as const,
-            }));
-          }
-          return [];
-        } catch (err) {
-          console.warn(`[stream] extractSource failed for ${s.sourceName}:`, err);
-          return [];
-        }
-      }),
-    );
-
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        resolvedSources.push(...result.value);
+      // Skip dead clock.json sources (Luf-Mp4, Ak) — endpoint returns 500
+      if (decodedUrl.startsWith("/apivtwo/")) {
+        skippedClockSources++;
+        continue;
       }
+
+      // Only return absolute URLs (http/https) — relative paths can't load in iframe
+      if (!decodedUrl.startsWith("http")) {
+        continue;
+      }
+
+      sources.push({
+        url: decodedUrl,
+        type: "iframe",
+        quality: s.quality,
+        sourceName: s.sourceName,
+        headers: s.headers,
+        provider: "allanime",
+      });
     }
 
-    console.log(`[stream] AllAnime resolved ${resolvedSources.length} playable sources`);
-    return resolvedSources;
+    if (skippedClockSources > 0) {
+      console.log(`[stream] AllAnime: skipped ${skippedClockSources} dead clock.json sources (Luf-Mp4/Ak)`);
+    }
+    console.log(`[stream] AllAnime: ${sources.length} playable iframe sources`);
+    return sources;
   } catch (err) {
     console.warn("[stream] AllAnime (via Worker) fetch failed:", err);
     return [];
