@@ -1,86 +1,66 @@
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
 
-# next.js
-/.next/
-/out/
-next-env.d.ts
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-Thumbs.db
-
+# (it's in package.json but only for reference)
+# .zscripts (dev environment)
+# Caddyfile (deployment config)
+# Cloudflare cookie storage (per-user, not committed)
+# IDE
+# OS
+# agent-ctx (dev context)
 # debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
+# dependencies
+# examples (websocket demo, not part of core app)
 # local env files
+# logs
+# misc
+# next.js
+# prisma (not used in this project)
+# production
+# scripts (keep them, they're useful)
+# scripts/
+# skills (development environment, not part of the project)
+# tool-results (temp)
+# typescript
+# upload (user-provided source files)
+# vercel
+# z-ai-web-dev-sdk (not used)
+*.log
+*.pem
+*.swo
+*.swp
+*.tsbuildinfo
+.DS_Store
+.DS_Store?
+.Spotlight-V100
+.Trashes
+._*
+.cf-cookie.json
 .env
 .env*.local
 .env.local
-
-# Cloudflare cookie storage (per-user, not committed)
-.cf-cookie.json
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-
-# logs
-*.log
-dev.log
-server.log
-
-# IDE
-.vscode/
 .idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-
-# scripts (keep them, they're useful)
-# scripts/
-
-# tool-results (temp)
-/tool-results/
-
-# skills (development environment, not part of the project)
-/skills/
-
-# upload (user-provided source files)
-/upload/
-
-# examples (websocket demo, not part of core app)
-/examples/
-
-# Caddyfile (deployment config)
-/Caddyfile
-
-# .zscripts (dev environment)
+.pnp.*
+.pnpm-debug.log*
+.vercel
+.vscode/
+/.next/
+/.pnp
 /.zscripts/
-
-# prisma (not used in this project)
-/prisma/
-
-# z-ai-web-dev-sdk (not used)
-# (it's in package.json but only for reference)
-
-# agent-ctx (dev context)
+/Caddyfile
 /agent-ctx/
+/build
+/examples/
+/node_modules
+/out/
+/prisma/
+/skills/
+/tool-results/
+/upload/
+Thumbs.db
+cf-worker/node_modules/
+dev.log
+ehthumbs.db
+next-env.d.ts
+npm-debug.log*
+server.log
+yarn-debug.log*
+yarn-error.log*
