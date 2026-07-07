@@ -59,7 +59,10 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     ".zscripts/**",
     "prisma/**",
     "agent-ctx/**",
-    "mini-services/**"
+    "mini-services/**",
+    // Standalone Node.js scripts — not part of the Next.js app
+    "free-solver/**",
+    "cf-worker/**"
   ]
 }];
 

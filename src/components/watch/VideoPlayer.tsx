@@ -292,7 +292,10 @@ export function VideoPlayer({
         }
       }
     },
-    [stream, allSources, sourceIdx],
+    // ✅ Include settings.pinnedSource in deps — line 253 reads it inside the
+    //    callback (gates whether multi-source fallback is allowed). The React
+    //    Compiler requires inferred deps to match the manually specified array.
+    [stream, allSources, sourceIdx, settings.pinnedSource],
   );
 
   useEffect(() => {
