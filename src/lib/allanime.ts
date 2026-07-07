@@ -290,20 +290,28 @@ export async function getEpisodeSources(
   async function tryEpisodeFetch(fetchUrl: string, timeoutMs?: number): Promise<Response | null> {
     try {
       // Use a separate AbortController per fetch so the CF Worker episode
-      // resolver (which can take 30-120s on first call due to Turnstile
-      // solver) doesn't share the short 12s timeout of direct API calls.
+      // resolver doesn't share the short 12s timeout of direct API calls.
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), timeoutMs ?? REQUEST_TIMEOUT_MS);
+      
+      // Detect if this is a call to our CF Worker (vs direct AllAnime API)
+      const isWorkerCall = fetchUrl.includes("/allanime/episode");
+      
       const res = await fetch(fetchUrl, {
         method: "GET",
         signal: ctrl.signal,
-        headers: {
-          Accept: "application/json",
-          "User-Agent": USER_AGENT,
-          Referer: REFERER,
-          Origin: ORIGIN,
-        },
-        next: { revalidate: 600 },
+        headers: isWorkerCall
+          ? { Accept: "application/json" }
+          : {
+              Accept: "application/json",
+              "User-Agent": USER_AGENT,
+              Referer: REFERER,
+              Origin: ORIGIN,
+            },
+        // ✅ NO next: { revalidate } — that was caching broken/empty responses
+        // from when the Worker was v4 (Browser Rendering, failing). The Worker
+        // itself caches responses for 5 min, so we don't need Vercel-level cache.
+        cache: "no-store",
       });
       clearTimeout(t);
       return res;
@@ -359,7 +367,7 @@ export async function getEpisodeSources(
       if (errCode === "AA_CRYPTO_MISSING" && solverUrl) {
         const solverType = FREE_SOLVER_URL ? "free-solver" : "cf-worker";
         console.warn(
-          `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver (with Turnstile solver)...`,
+          `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver...`,
         );
         const epEndpoint = `${solverUrl}/allanime/episode?` +
           new URLSearchParams({
@@ -368,10 +376,27 @@ export async function getEpisodeSources(
             translationType: mode,
           }).toString();
 
-        // 150s timeout — first captcha solve can take 30-120s; cached calls <1s.
-        const solverRes = await tryEpisodeFetch(epEndpoint, 150_000);
+        console.log(`[AllAnime] calling ${solverType}: ${epEndpoint}`);
+        // 60s timeout — v5 Worker uses direct crypto (1-2s), no browser.
+        const solverRes = await tryEpisodeFetch(epEndpoint, 60_000);
+        
+        if (solverRes) {
+          console.log(`[AllAnime] ${solverType} HTTP ${solverRes.status}`);
+        }
+        
         if (solverRes && solverRes.ok) {
-          const solverJson = await solverRes.json();
+          const responseText = await solverRes.text();
+          console.log(`[AllAnime] ${solverType} response length: ${responseText.length}`);
+          console.log(`[AllAnime] ${solverType} response preview: ${responseText.slice(0, 300)}`);
+          
+          let solverJson: { sources?: unknown[]; error?: string };
+          try {
+            solverJson = JSON.parse(responseText);
+          } catch (parseErr) {
+            console.warn(`[AllAnime] ${solverType} response not JSON:`, parseErr);
+            return null;
+          }
+          
           if (
             solverJson.sources &&
             Array.isArray(solverJson.sources) &&
@@ -384,7 +409,7 @@ export async function getEpisodeSources(
           }
           console.warn(
             `[AllAnime] ${solverType} episode resolver returned no sources:`,
-            solverJson.error ?? "empty",
+            solverJson.error ?? JSON.stringify(solverJson).slice(0, 300),
           );
         } else {
           // 404 means the CF Worker is v2 (no /allanime/episode endpoint) —

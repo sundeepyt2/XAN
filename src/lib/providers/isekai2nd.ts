@@ -86,31 +86,40 @@ export async function fetchIsekai2ndSources(
   }
 
   const controller = new AbortController();
-  // 150s timeout — first captcha solve can take 30-120s; cached calls <1s.
-  // Both the free VPS solver and the CF Worker cache solved tokens/captchas
-  // for 4-5 min, so most calls hit the cache and return immediately.
-  const timeout = setTimeout(() => controller.abort(), 150_000);
+  // 60s timeout — v5 Worker uses direct crypto (1-2s response time), no browser.
+  // Old 150s timeout was for Browser Rendering; no longer needed.
+  const timeout = setTimeout(() => controller.abort(), 60_000);
 
   try {
-    const res = await fetch(`${endpoint}?${params.toString()}`, {
+    const fullUrl = `${endpoint}?${params.toString()}`;
+    console.log(`[isekai2nd] calling ${backend}: ${fullUrl}`);
+    
+    const res = await fetch(fullUrl, {
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": USER_AGENT,
-        Referer: ISEKAI2ND_REFERER,
-        Origin: ISEKAI2ND_ORIGIN,
       },
-      next: { revalidate: 300 }, // cache for 5 min — episodes don't change
+      // ✅ NO next: { revalidate } — that was caching broken/empty responses
+      // from when the Worker was v4 (Browser Rendering, failing). The Worker
+      // itself caches responses for 5 min, so we don't need Vercel-level cache.
+      cache: "no-store",
     });
 
+    console.log(`[isekai2nd] ${backend} HTTP ${res.status}`);
+
     if (!res.ok) {
+      const errorText = await res.text().catch(() => "<no body>");
       console.warn(
-        `[isekai2nd] ${backend} returned HTTP ${res.status} for showId=${showId} ep=${episodeStr}`,
+        `[isekai2nd] ${backend} returned HTTP ${res.status} for showId=${showId} ep=${episodeStr}: ${errorText.slice(0, 300)}`,
       );
       return [];
     }
 
-    const json = (await res.json()) as {
+    const responseText = await res.text();
+    console.log(`[isekai2nd] response length: ${responseText.length} chars`);
+    console.log(`[isekai2nd] response preview: ${responseText.slice(0, 200)}`);
+
+    let json: {
       sources?: Array<{
         sourceUrl: string;
         sourceName: string;
@@ -121,13 +130,20 @@ export async function fetchIsekai2ndSources(
       cached?: boolean;
     };
 
+    try {
+      json = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.warn(`[isekai2nd] failed to parse JSON response:`, parseErr);
+      return [];
+    }
+
     if (json.error) {
       console.warn(`[isekai2nd] ${backend} error: ${json.error}`);
       return [];
     }
 
     if (!json.sources || json.sources.length === 0) {
-      console.warn(`[isekai2nd] No sources returned for showId=${showId} ep=${episodeStr}`);
+      console.warn(`[isekai2nd] No sources in response for showId=${showId} ep=${episodeStr}. Full response: ${JSON.stringify(json).slice(0, 500)}`);
       return [];
     }
 
