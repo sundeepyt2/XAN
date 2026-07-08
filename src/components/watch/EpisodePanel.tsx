@@ -100,7 +100,7 @@ export function EpisodePanel({
       </div>
       {/* ✅ Bug fix: use plain overflow-y-auto div instead of Radix ScrollArea.
           ScrollArea's Viewport was intercepting click events on Link components. */}
-      <div className="h-[60vh] overflow-y-auto xan-scroll p-3">
+      <div className="max-h-[40vh] overflow-y-auto xan-scroll p-3">
         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
           {showCurrentEpisodeHint && (
             <Link
