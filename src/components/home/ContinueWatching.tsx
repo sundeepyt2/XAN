@@ -8,6 +8,7 @@ import Image from "next/image";
 import { motion } from "motion/react";
 import { History, X, Play } from "lucide-react";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
+import { useAnimeList } from "@/hooks/useAnimeList";
 import { Button } from "@/components/ui/button";
 
 function formatTimeAgo(ts: number): string {
@@ -29,17 +30,26 @@ function formatProgress(timestamp: number, duration: number): number {
 
 export function ContinueWatching() {
   const { history, isLoaded, removeEntry } = useWatchHistory();
+  const { list, isLoaded: listLoaded } = useAnimeList();
 
   // SSR placeholder — same shape as loaded empty state to avoid hydration mismatch
   if (!isLoaded) {
     return null;
   }
 
-  if (history.length === 0) {
+  // ✅ Filter out completed anime — they shouldn't appear in "Continue Watching"
+  const completedIds = new Set(
+    listLoaded ? list.filter((e) => e.status === "COMPLETED").map((e) => e.animeId) : [],
+  );
+  const filteredHistory = completedIds.size > 0
+    ? history.filter((e) => !completedIds.has(e.animeId))
+    : history;
+
+  if (filteredHistory.length === 0) {
     return null;
   }
 
-  const recent = history.slice(0, 6);
+  const recent = filteredHistory.slice(0, 6);
 
   return (
     <section className="space-y-4">

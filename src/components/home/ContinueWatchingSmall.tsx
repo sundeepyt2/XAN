@@ -12,6 +12,7 @@ import { motion } from "motion/react";
 import { History, Play, ChevronRight, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWatchHistory, type WatchHistoryEntry } from "@/hooks/useWatchHistory";
+import { useAnimeList } from "@/hooks/useAnimeList";
 
 interface GroupedHistoryEntry {
   animeId: number;
@@ -67,6 +68,7 @@ function formatProgress(timestamp: number, duration: number): number {
 
 export function ContinueWatchingSmall() {
   const { history, isLoaded } = useWatchHistory();
+  const { list, isLoaded: listLoaded } = useAnimeList();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scrollBy = (dir: "left" | "right") => {
@@ -78,7 +80,17 @@ export function ContinueWatchingSmall() {
 
   if (!isLoaded) return null;
 
-  const grouped = groupByAnime(history);
+  // ✅ Filter out completed anime — they shouldn't appear in "Continue Watching"
+  // on the home page. The full history is still available on /history page.
+  // Anime marked as COMPLETED in the user's list are excluded.
+  const completedIds = new Set(
+    listLoaded ? list.filter((e) => e.status === "COMPLETED").map((e) => e.animeId) : [],
+  );
+  const filteredHistory = completedIds.size > 0
+    ? history.filter((e) => !completedIds.has(e.animeId))
+    : history;
+
+  const grouped = groupByAnime(filteredHistory);
   if (grouped.length === 0) return null;
 
   const recent = grouped.slice(0, 10);
