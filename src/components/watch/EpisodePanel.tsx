@@ -100,22 +100,15 @@ export function EpisodePanel({
       </div>
       {/* ✅ Bug fix: use plain overflow-y-auto div instead of Radix ScrollArea.
           ScrollArea's Viewport was intercepting click events on Link components. */}
-      <div className="h-[60vh] overflow-y-auto xan-scroll">
-        <div className="divide-y divide-xan-border">
+      <div className="h-[60vh] overflow-y-auto xan-scroll p-3">
+        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
           {showCurrentEpisodeHint && (
             <Link
               href={`/watch/${animeId}?ep=${currentEpisode}${typeParam}`}
-              className="flex items-center gap-3 px-4 py-3 bg-xan-card-hover transition-colors"
+              className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-crimson border border-xan-crimson text-white text-sm font-mono font-semibold transition-all"
             >
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border bg-xan-crimson border-xan-crimson text-white">
-                <Play className="h-3.5 w-3.5 fill-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">
-                  Episode {currentEpisode}
-                </p>
-              </div>
-              <CheckCircle2 className="h-4 w-4 text-xan-crimson flex-shrink-0" />
+              {currentEpisode}
+              <CheckCircle2 className="absolute -top-1 -right-1 h-3.5 w-3.5 text-xan-crimson bg-xan-dark rounded-full" />
             </Link>
           )}
           {episodes.map((n) => {
@@ -134,21 +127,14 @@ export function EpisodePanel({
                 <div
                   key={n}
                   title={airingHint}
-                  className="flex items-center gap-3 px-4 py-3 opacity-50 grayscale cursor-not-allowed select-none"
+                  className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-card/30 border border-xan-border/50 opacity-40 grayscale cursor-not-allowed select-none text-sm font-mono text-muted-foreground"
                 >
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border bg-xan-card border-xan-border text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-muted-foreground line-through decoration-muted-foreground/40">
-                      Episode {n}
-                    </p>
-                    {isNext && (
-                      <p className="text-[10px] text-xan-crimson font-mono mt-0.5">
-                        {airingHint}
-                      </p>
-                    )}
-                  </div>
+                  {n}
+                  {isNext && (
+                    <span className="absolute -top-1 -right-1 text-[8px] px-1 py-0.5 rounded-full bg-xan-crimson/20 text-xan-crimson border border-xan-crimson/30 font-mono leading-none">
+                      SOON
+                    </span>
+                  )}
                 </div>
               );
             }
@@ -157,37 +143,17 @@ export function EpisodePanel({
               <Link
                 key={n}
                 href={`/watch/${animeId}?ep=${n}${typeParam}`}
+                title={`Episode ${n}`}
                 className={cn(
-                  "flex items-center gap-3 px-4 py-3 hover:bg-xan-card-hover transition-colors",
-                  isActive && "bg-xan-card-hover",
+                  "relative flex items-center justify-center aspect-square rounded-lg border transition-all text-sm font-mono font-semibold",
+                  isActive
+                    ? "bg-xan-crimson border-xan-crimson text-white"
+                    : "bg-xan-card border-xan-border text-foreground hover:bg-xan-crimson/15 hover:border-xan-crimson/50 hover:text-xan-crimson",
                 )}
               >
-                <div
-                  className={cn(
-                    "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border",
-                    isActive
-                      ? "bg-xan-crimson border-xan-crimson text-white"
-                      : "bg-xan-card border-xan-border text-muted-foreground",
-                  )}
-                >
-                  {isActive ? (
-                    <Play className="h-3.5 w-3.5 fill-white" />
-                  ) : (
-                    <span className="text-xs font-medium">{n}</span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p
-                    className={cn(
-                      "text-sm font-medium",
-                      isActive ? "text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    Episode {n}
-                  </p>
-                </div>
+                {n}
                 {isActive && (
-                  <CheckCircle2 className="h-4 w-4 text-xan-crimson flex-shrink-0" />
+                  <Play className="absolute top-1 right-1 h-2.5 w-2.5 fill-white text-white" />
                 )}
               </Link>
             );
