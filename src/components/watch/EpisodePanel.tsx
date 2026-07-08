@@ -27,6 +27,8 @@ interface EpisodePanelProps {
   nextAiringEpisode?: NextAiringEpisode | null;
   /** Current sub/dub mode — used to preserve type param in episode links */
   mode?: "sub" | "dub";
+  /** Optional className for the <aside> — e.g. 'self-start' to prevent stretching */
+  className?: string;
 }
 
 const MAX_RENDERED = 200;
@@ -57,6 +59,7 @@ export function EpisodePanel({
   currentEpisode,
   nextAiringEpisode,
   mode = "sub",
+  className,
 }: EpisodePanelProps) {
   const fetchingAllAnime = allAnimeLoading && episodeCount == null && allAnimeEpisodeCount == null;
 
@@ -77,7 +80,7 @@ export function EpisodePanel({
   const typeParam = mode === "dub" ? "&type=dub" : "";
 
   return (
-    <aside className="rounded-xl bg-xan-card/50 overflow-hidden">
+    <aside className={cn("rounded-xl bg-xan-card/50 overflow-hidden", className)}>
       <div className="px-4 py-2.5 border-b border-xan-border/50">
         <h3 className="font-semibold text-sm text-foreground">Episodes</h3>
         <p className="text-xs text-muted-foreground">

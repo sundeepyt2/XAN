@@ -620,6 +620,7 @@ function WatchPageInner({ params }: PageProps) {
           currentEpisode={currentEpisode}
           nextAiringEpisode={anime.nextAiringEpisode}
           mode={mode}
+          className="self-start"
         />
       </div>
     </div>
