@@ -80,8 +80,8 @@ export function EpisodePanel({
   const typeParam = mode === "dub" ? "&type=dub" : "";
 
   return (
-    <aside className={cn("rounded-xl bg-xan-card/50 overflow-hidden", className)}>
-      <div className="px-4 py-2.5 border-b border-xan-border/50">
+    <aside className={cn("rounded-xl border border-xan-border bg-xan-card/50 overflow-hidden", className)}>
+      <div className="px-4 py-3 border-b border-xan-border">
         <h3 className="font-semibold text-sm text-foreground">Episodes</h3>
         <p className="text-xs text-muted-foreground">
           {total} total{total > MAX_RENDERED && ` (showing first ${MAX_RENDERED})`}
