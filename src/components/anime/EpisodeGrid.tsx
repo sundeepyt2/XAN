@@ -16,7 +16,7 @@
 
 import Link from "next/link";
 import { useState, useMemo } from "react";
-import { Play, Search, Clock, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Clock, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useAllAnimeInfo } from "@/hooks/useAllAnimeInfo";
@@ -230,9 +230,9 @@ export function EpisodeGrid({
         </div>
       ) : null}
 
-      {/* Episode grid (windowed) */}
+      {/* Episode grid (windowed) — compact numbered squares */}
       <div className="h-72 overflow-y-auto rounded-lg border border-xan-border bg-xan-card/50 xan-scroll">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-3">
+        <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 p-3">
           {displayEpisodes.length > 0 ? (
             displayEpisodes.map((n) => {
               const isReleased = n <= latestAired;
@@ -249,14 +249,11 @@ export function EpisodeGrid({
                   <div
                     key={n}
                     title={airingHint}
-                    className="flex items-center justify-start h-auto py-2 px-3 bg-xan-card/30 border border-xan-border/50 text-left cursor-not-allowed opacity-50 grayscale select-none"
+                    className="flex items-center justify-center aspect-square rounded-lg bg-xan-card/30 border border-xan-border/50 cursor-not-allowed opacity-40 grayscale select-none text-sm font-mono text-muted-foreground"
                   >
-                    <Clock className="h-3 w-3 text-muted-foreground mr-2 flex-shrink-0" />
-                    <span className="text-sm text-muted-foreground line-through decoration-muted-foreground/40">
-                      Episode {n}
-                    </span>
+                    {n}
                     {isNext && (
-                      <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-xan-crimson/15 text-xan-crimson border border-xan-crimson/30 font-mono">
+                      <span className="absolute -top-1 -right-1 text-[8px] px-1 py-0.5 rounded-full bg-xan-crimson/20 text-xan-crimson border border-xan-crimson/30 font-mono leading-none">
                         SOON
                       </span>
                     )}
@@ -265,17 +262,13 @@ export function EpisodeGrid({
               }
 
               return (
-                <Button
+                <Link
                   key={n}
-                  variant="ghost"
-                  asChild
-                  className="justify-start h-auto py-2 px-3 bg-xan-card hover:bg-xan-card-hover border border-xan-border hover:border-xan-crimson/40 text-left"
+                  href={`/watch/${animeId}?ep=${n}`}
+                  className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-card hover:bg-xan-crimson/15 border border-xan-border hover:border-xan-crimson/50 transition-all text-sm font-mono font-semibold text-foreground hover:text-xan-crimson"
                 >
-                  <Link href={`/watch/${animeId}?ep=${n}`}>
-                    <Play className="h-3 w-3 text-xan-crimson mr-2 flex-shrink-0" />
-                    <span className="text-sm text-foreground">Episode {n}</span>
-                  </Link>
-                </Button>
+                  {n}
+                </Link>
               );
             })
           ) : (
