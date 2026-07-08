@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
+import { useAnimeList } from "@/hooks/useAnimeList";
 import { useSettings } from "@/hooks/useSettings";
 import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
 import { useAllAnimeInfo } from "@/hooks/useAllAnimeInfo";
@@ -148,6 +149,7 @@ function WatchPageInner({ params }: PageProps) {
   const urlMode = searchParams.get("type") === "dub" ? "dub" : null;
   const mode = urlMode ?? preferredMode;
   const { history, addEntry } = useWatchHistory();
+  const { checkAndAutoComplete } = useAnimeList();
 
   const savedEntry = useMemo(
     () =>
@@ -246,8 +248,18 @@ function WatchPageInner({ params }: PageProps) {
   );
 
   const handleEpisodeEnd = useCallback(() => {
+    // ✅ Auto-complete: if this was the last episode of a FINISHED anime,
+    // auto-add it to the "Completed" list.
+    if (anime) {
+      checkAndAutoComplete(anime.id, currentEpisode, {
+        title: getTitle(anime.title),
+        coverImage: anime.coverImage?.large ?? "/placeholder-card.png",
+        episodes: anime.episodes ?? null,
+        airingStatus: anime.status ?? null,
+      });
+    }
     setShowAutoPlay(true);
-  }, []);
+  }, [anime, currentEpisode, checkAndAutoComplete]);
 
   // ✅ Memoized callbacks for VideoPlayer — prevents unnecessary re-renders.
   // Previously these were inline arrow functions, which created a new function

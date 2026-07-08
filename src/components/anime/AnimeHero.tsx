@@ -138,6 +138,7 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
                 title={title}
                 coverImage={cover}
                 episodes={anime.episodes}
+                airingStatus={anime.status}
               />
               <BookmarkButton
                 animeId={anime.id}
