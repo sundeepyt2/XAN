@@ -867,7 +867,11 @@ export function YouTubeStylePlayer({
       // values — prevents stale closure from hiding controls while a menu
       // is open (which would make the settings panel disappear/become
       // unclickable until the user moved the mouse again).
-      const shouldHide = playingRef.current && !showSettingsRef.current && !showShortcutsRef.current;
+      // ✅ For iframe sources, there's no <video> element so playingRef is
+      // always false. Treat iframe as "always playing" once loaded so the
+      // auto-hide still works.
+      const isIframe = streamType === "iframe";
+      const shouldHide = (isIframe || playingRef.current) && !showSettingsRef.current && !showShortcutsRef.current;
       if (shouldHide) {
         setControlsVisible(false);
         setCursorVisible(false);
@@ -1329,6 +1333,9 @@ export function YouTubeStylePlayer({
             // ✅ Fire tier resolved as "direct" — iframe loads directly, 0 Vercel BW
             fireTierResolvedRef.current?.("direct");
             onLoadedCallbackRef.current?.();
+            // ✅ Start the auto-hide timer once the iframe loads — without this,
+            // the top bar stays visible forever (no "play" event to trigger it)
+            scheduleHide();
           }}
         />
         {/* Loading spinner while iframe loads — only show when controls visible */}
