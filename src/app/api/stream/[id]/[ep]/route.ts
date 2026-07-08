@@ -357,62 +357,151 @@ async function fetchIsekai2ndSourcesServerSide(
 }
 
 // ✅ Process raw AllAnime sources from the Worker into playable UnifiedSource[]
-// Handles: XOR-decoding, mp4upload direct MP4 extraction, dead source skipping
+// Handles: XOR-decoding, mp4upload direct MP4 extraction, dead source skipping,
+// and health-checking embed URLs to filter out deleted/blocked videos.
 async function processAllAnimeSources(rawSources: Array<{ url: string; sourceName: string; quality: string | null; type: string; headers?: Record<string, string> }>): Promise<UnifiedSource[]> {
   const sources: UnifiedSource[] = [];
   let skippedClockSources = 0;
+  let skippedDeadSources = 0;
 
-  for (const s of rawSources) {
-    const decodedUrl = decodeUrl(s.url);
+  // Process sources in parallel for speed — health checks take ~1s each
+  const results = await Promise.all(
+    rawSources.map(async (s) => {
+      const decodedUrl = decodeUrl(s.url);
 
-    // Skip dead clock.json sources (Luf-Mp4, Ak)
-    if (decodedUrl.startsWith("/apivtwo/")) {
-      skippedClockSources++;
+      // Skip dead clock.json sources (Luf-Mp4, Ak)
+      if (decodedUrl.startsWith("/apivtwo/")) {
+        return { skip: "clock" as const, source: s };
+      }
+
+      // Only process absolute URLs
+      if (!decodedUrl.startsWith("http")) {
+        return { skip: "invalid" as const, source: s };
+      }
+
+      // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL
+      if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
+        const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
+        if (directMp4) {
+          const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL?.replace(/\/+$/, "");
+          const finalUrl = workerUrl
+            ? `${workerUrl}/?url=${encodeURIComponent(directMp4)}&h_Referer=${encodeURIComponent("https://www.mp4upload.com/")}`
+            : directMp4;
+
+          return {
+            source: s,
+            unified: {
+              url: finalUrl,
+              type: "mp4" as const,
+              quality: null,
+              sourceName: s.sourceName,
+              provider: "allanime",
+            },
+          };
+        }
+        // mp4upload scraping failed — check if the video is deleted
+        const health = await checkEmbedHealth(decodedUrl);
+        if (!health.ok) {
+          return { skip: "dead" as const, source: s, reason: health.reason };
+        }
+      }
+
+      // ✅ Health-check other embed sources (streamsb, streamlare, etc.)
+      // Many AllAnime sources are deleted, geo-blocked, or behind JS challenges
+      // that don't render in XAN's iframe. Quick HEAD/GET check filters these out.
+      const name = s.sourceName.toLowerCase();
+      if (name.includes("ss-hls") || name.includes("sl-mp4") || decodedUrl.includes("streamsb") || decodedUrl.includes("streamlare")) {
+        const health = await checkEmbedHealth(decodedUrl);
+        if (!health.ok) {
+          return { skip: "dead" as const, source: s, reason: health.reason };
+        }
+      }
+
+      // All other sources → iframe (JS-rendered embed pages)
+      return {
+        source: s,
+        unified: {
+          url: decodedUrl,
+          type: "iframe" as const,
+          quality: s.quality,
+          sourceName: s.sourceName,
+          headers: s.headers,
+          provider: "allanime",
+        },
+      };
+    }),
+  );
+
+  for (const result of results) {
+    if (result.skip) {
+      if (result.skip === "clock") skippedClockSources++;
+      else if (result.skip === "dead") {
+        skippedDeadSources++;
+        console.log(`[stream] AllAnime: skipped dead source "${result.source.sourceName}" — ${result.reason}`);
+      }
       continue;
     }
-
-    // Only process absolute URLs
-    if (!decodedUrl.startsWith("http")) continue;
-
-    // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL, then
-    // pre-wrap with CF Worker proxy URL so the player loads it on the first
-    // try (no failed "direct" attempt → no fallback delay).
-    if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
-      const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
-      if (directMp4) {
-        const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL?.replace(/\/+$/, "");
-        const finalUrl = workerUrl
-          ? `${workerUrl}/?url=${encodeURIComponent(directMp4)}&h_Referer=${encodeURIComponent("https://www.mp4upload.com/")}`
-          : directMp4;
-
-        sources.push({
-          url: finalUrl,
-          type: "mp4",
-          quality: null,
-          sourceName: s.sourceName,
-          provider: "allanime",
-        });
-        continue;
-      }
-      // If scraping failed, fall through to iframe
+    if (result.unified) {
+      sources.push(result.unified);
     }
-
-    // All other sources → iframe (JS-rendered embed pages)
-    sources.push({
-      url: decodedUrl,
-      type: "iframe",
-      quality: s.quality,
-      sourceName: s.sourceName,
-      headers: s.headers,
-      provider: "allanime",
-    });
   }
 
   if (skippedClockSources > 0) {
     console.log(`[stream] AllAnime: skipped ${skippedClockSources} dead clock.json sources (Luf-Mp4/Ak)`);
   }
+  if (skippedDeadSources > 0) {
+    console.log(`[stream] AllAnime: skipped ${skippedDeadSources} dead/blocked embed sources`);
+  }
   console.log(`[stream] AllAnime: ${sources.length} playable sources (${sources.filter(s=>s.type==="mp4").length} direct MP4, ${sources.filter(s=>s.type==="iframe").length} iframe)`);
   return sources;
+}
+
+// ✅ Quick health check for embed URLs — detects deleted videos, JS challenges,
+// and anti-adblock redirect pages. Returns { ok: false, reason } for dead sources.
+// Uses a short timeout (5s) and checks response size + content patterns.
+async function checkEmbedHealth(url: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+
+    if (!res.ok) {
+      return { ok: false, reason: `HTTP ${res.status}` };
+    }
+
+    const text = await res.text();
+
+    // Deleted videos (mp4upload returns "File was deleted" — 16 bytes)
+    if (text.length < 100) {
+      return { ok: false, reason: `response too small (${text.length}b): "${text.trim().slice(0, 50)}"` };
+    }
+
+    // Anti-adblock / JS challenge redirect pages (streamlare, streamsb)
+    if (text.includes("parklogic.com") || text.includes("adBlockingDetected")) {
+      return { ok: false, reason: "anti-adblock challenge page" };
+    }
+
+    // JS-only redirect pages (streamsb returns a 500-byte JS redirect)
+    if (text.length < 600 && text.includes("window.location.replace")) {
+      return { ok: false, reason: "JS redirect page (likely challenge)" };
+    }
+
+    // "File not found" / "Video removed" patterns
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes("file was deleted") || lowerText.includes("video not found") || lowerText.includes("video removed") || lowerText.includes("file not found")) {
+      return { ok: false, reason: "video deleted/removed" };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    // Timeout or network error — don't skip the source, it might work in the browser
+    return { ok: true };
+  }
 }
 
 // ✅ Scrape mp4upload embed page to extract the direct .mp4 URL
