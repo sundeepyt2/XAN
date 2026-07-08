@@ -1310,7 +1310,9 @@ export function YouTubeStylePlayer({
     return (
       <div
         ref={containerRef}
-        className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border select-none"
+        className={`relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border select-none ${cursorVisible ? "" : "cursor-none"}`}
+        onMouseMove={onContainerMouseMove}
+        onMouseLeave={onContainerMouseLeave}
       >
         <VideoEnhancerFilters state={enhancer.rawState} />
 
@@ -1329,14 +1331,14 @@ export function YouTubeStylePlayer({
             onLoadedCallbackRef.current?.();
           }}
         />
-        {/* Loading spinner while iframe loads */}
+        {/* Loading spinner while iframe loads — only show when controls visible */}
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black pointer-events-none">
             <div className="w-12 h-12 rounded-full border-4 border-white/20 border-t-xan-crimson animate-xan-spinner" />
           </div>
         )}
-        {/* Top gradient with title + source badge + fullscreen button */}
-        <div className="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none">
+        {/* Top gradient with title + source badge + fullscreen button — auto-hides after 3s */}
+        <div className={`absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none transition-opacity duration-300 ${controlsVisible ? "opacity-100" : "opacity-0"}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-white font-semibold text-sm md:text-base truncate drop-shadow">
