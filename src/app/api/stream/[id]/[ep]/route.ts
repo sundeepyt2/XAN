@@ -410,7 +410,18 @@ async function processAllAnimeSources(rawSources: Array<{ url: string; sourceNam
       // Many AllAnime sources are deleted, geo-blocked, or behind JS challenges
       // that don't render in XAN's iframe. Quick HEAD/GET check filters these out.
       const name = s.sourceName.toLowerCase();
-      if (name.includes("ss-hls") || name.includes("sl-mp4") || decodedUrl.includes("streamsb") || decodedUrl.includes("streamlare")) {
+      // Known-dead providers — domains are parked/taken over, no video content
+      const DEAD_PROVIDERS = ["ss-hls", "sl-mp4"];
+      const DEAD_DOMAINS = ["streamsb.net", "streamlare.com"];
+      const isDeadProvider = DEAD_PROVIDERS.some((p) => name.includes(p));
+      const isDeadDomain = DEAD_DOMAINS.some((d) => decodedUrl.includes(d));
+
+      if (isDeadProvider || isDeadDomain) {
+        return { skip: "dead" as const, source: s, reason: "provider domain is parked/dead" };
+      }
+
+      // Health-check other unknown embed sources
+      if (name.includes("viz") || name.includes("mycloud") || decodedUrl.includes("vizcloud") || decodedUrl.includes("mycloud")) {
         const health = await checkEmbedHealth(decodedUrl);
         if (!health.ok) {
           return { skip: "dead" as const, source: s, reason: health.reason };
