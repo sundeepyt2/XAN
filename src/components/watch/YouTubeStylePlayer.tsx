@@ -1308,6 +1308,11 @@ export function YouTubeStylePlayer({
         document.exitFullscreen();
       } else {
         containerRef.current?.requestFullscreen?.();
+        // ✅ Start auto-hide timer after entering fullscreen — otherwise the
+        // top bar stays visible forever (the click that triggered fullscreen
+        // also triggered showControls, which cancels any pending hide timer)
+        showControls();
+        scheduleHide();
       }
     };
 
