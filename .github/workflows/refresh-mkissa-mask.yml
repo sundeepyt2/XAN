@@ -128,49 +128,60 @@ jobs:
               .filter(u => u.includes("/_app/immutable/entry/"));
             if (entryUrls.length === 0) throw new Error("no entry chunk URLs in mkissa.to HTML");
 
-            // 3. Fetch entry chunks, collect /chunks/ URLs
-            const chunkUrls = new Set();
-            await Promise.all(entryUrls.map(async (url) => {
-              try {
-                const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
-                if (!res.ok) return;
-                const src = await res.text();
-                for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
-                  const abs = resolveChunkUrl(m[1], url);
-                  if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
+            // 3. BFS crawl — fetch chunks at increasing depths, searching each for
+            // the MASK pattern and collecting new chunk URLs to crawl next.
+            // The MASK chunk is NOT always directly imported by the entry chunks —
+            // it can be nested 2+ levels deep (e.g. entry → chunkA → chunkB(=MASK)).
+            // We crawl breadth-first and short-circuit the moment we find a hit.
+            const MAX_CHUNKS_TO_CRAWL = 40;
+            const visited = new Set();
+            const queue = [...entryUrls];
+            let crawlCount = 0;
+
+            while (queue.length > 0 && crawlCount < MAX_CHUNKS_TO_CRAWL) {
+              const batch = queue.splice(0, Math.min(queue.length, 10));
+              const batchResults = await Promise.all(batch.map(async (url) => {
+                if (visited.has(url)) return { found: null, newUrls: [] };
+                visited.add(url);
+                crawlCount++;
+                try {
+                  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
+                  if (!res.ok) return { found: null, newUrls: [] };
+                  const src = await res.text();
+                  const extracted = extractMaskAndBuildId(src);
+                  if (extracted && extracted.buildId) {
+                    return {
+                      found: { mask: extracted.mask, buildId: extracted.buildId, chunk: url.split("/").pop() },
+                      newUrls: [],
+                    };
+                  }
+                  const newUrls = [];
+                  for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
+                    const abs = resolveChunkUrl(m[1], url);
+                    if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) newUrls.push(abs);
+                  }
+                  for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
+                    const abs = resolveChunkUrl(m[1], url);
+                    if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) newUrls.push(abs);
+                  }
+                  return { found: null, newUrls };
+                } catch { return { found: null, newUrls: [] }; }
+              }));
+
+              const found = batchResults.find(r => r.found !== null);
+              if (found) {
+                console.log(`✓ MASK=${found.found.mask.slice(0,16)}... BUILD_ID=${found.found.buildId} (from ${found.found.chunk}, crawled ${crawlCount} chunks)`);
+                console.log(JSON.stringify({ mask: found.found.mask, buildId: found.found.buildId, chunk: found.found.chunk }));
+                return;
+              }
+
+              for (const r of batchResults) {
+                for (const u of r.newUrls) {
+                  if (!visited.has(u) && !queue.includes(u)) queue.push(u);
                 }
-                for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
-                  const abs = resolveChunkUrl(m[1], url);
-                  if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
-                }
-              } catch (e) { console.error(`entry fetch failed ${url}: ${e.message}`); }
-            }));
-
-            // 4. Fetch chunks in parallel, search for MASK + BUILD_ID
-            const candidates = [...chunkUrls];
-            console.log(`Found ${candidates.length} chunk URLs to search`);
-            const results = await Promise.all(candidates.map(async (url) => {
-              try {
-                const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
-                if (!res.ok) return null;
-                const src = await res.text();
-                const extracted = extractMaskAndBuildId(src);
-                if (!extracted || !extracted.buildId) return null;
-                return {
-                  mask: extracted.mask,
-                  buildId: extracted.buildId,
-                  chunk: url.split("/").pop(),
-                };
-              } catch { return null; }
-            }));
-
-            const found = results.find(r => r !== null);
-            if (!found) throw new Error("MASK/BUILD_ID not found in any chunk — pattern shape may have changed again. Update extractMaskAndBuildId() in both worker.js and this workflow.");
-            if (!found.buildId) throw new Error(`MASK found in ${found.chunk} but BUILD_ID missing`);
-
-            console.log(`✓ MASK=${found.mask.slice(0,16)}... BUILD_ID=${found.buildId} (from ${found.chunk})`);
-            // Output as JSON for the next step to consume
-            console.log(JSON.stringify({ mask: found.mask, buildId: found.buildId, chunk: found.chunk }));
+              }
+            }
+            throw new Error(`MASK/BUILD_ID not found after crawling ${crawlCount} chunks — pattern shape may have changed. Update extractMaskAndBuildId() in both worker.js and this workflow.`);
           }
 
           main().then(result => {

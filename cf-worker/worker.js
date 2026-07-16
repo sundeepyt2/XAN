@@ -41,8 +41,8 @@
 //     regexes in discoverMaskFromMkissa() and the fallback values here, then
 //     redeploy)
 // Last manual verification: 2026-07-15
-const FALLBACK_MASK_HEX = "963ab10ca5ffd26f82f6be97be68edacb9f3cfecf0eff06e9729c51b2e7f86f7";
-const FALLBACK_BUILD_ID = "32";
+const FALLBACK_MASK_HEX = "955b760823fc0dbfd0356bd81e132c1ef4141dbf33297e117352a8d8e1cf05d2";
+const FALLBACK_BUILD_ID = "38";
 
 // Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
 // Worker isolate (cross-request within the same isolate). TTL is long because
@@ -374,73 +374,90 @@ async function discoverMaskFromMkissa() {
     throw new Error("no entry chunk URLs found in mkissa.to HTML");
   }
 
-  // Step 3: Fetch entry chunks, collect all referenced /chunks/ URLs
-  // (We focus on /chunks/ because the MASK lives in a shared chunk, not a node.
-  //  The mask chunk CY39o1wT.js is directly imported by entry/app.<hash>.js.)
-  const chunkUrls = new Set();
-  await Promise.all(
-    entryUrls.map(async (url) => {
-      try {
-        const res = await fetch(url, {
-          headers: { "User-Agent": MKISSA_UA, "Accept": "*/*" },
-        });
-        if (!res.ok) return;
-        const src = await res.text();
-        // Dynamic imports: import("./chunks/foo.js") or import("../chunks/foo.js")
-        for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
-          const abs = resolveChunkUrl(m[1], url);
-          if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
-        }
-        // Static imports: from "./chunks/foo.js"  (note: minified JS has NO space
-        // between `from` and the opening quote, so \s* not \s+)
-        for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
-          const abs = resolveChunkUrl(m[1], url);
-          if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
-        }
-      } catch (e) {
-        console.warn(`[worker] failed to fetch entry chunk ${url}: ${e.message}`);
-      }
-    })
-  );
+  // Step 3: BFS crawl — fetch chunks at increasing depths, searching each for
+  // the MASK pattern and collecting new chunk URLs to crawl next.
+  //
+  // The MASK chunk is NOT always directly imported by the entry chunks —
+  // it can be nested 2+ levels deep (e.g. entry → chunkA → chunkB(=MASK)).
+  // We crawl breadth-first and short-circuit the moment we find a hit.
+  //
+  // Subrequest budget: CF Workers free tier allows 50 subrequests per request.
+  // Worst case: 1 (HTML) + 2 (entries) + ~10 (depth 1) + ~15 (depth 2) = ~28.
+  // We cap at MAX_CHUNKS_TO_CRAWL=40 to stay safely under the limit.
+  const MAX_CHUNKS_TO_CRAWL = 40;
+  const visited = new Set();
+  const queue = [...entryUrls];
+  let crawlCount = 0;
 
-  const candidateUrls = [...chunkUrls];
-  console.log(`[worker] found ${candidateUrls.length} chunk URLs to search for MASK`);
-  if (candidateUrls.length === 0) {
-    throw new Error("no /chunks/ URLs found in entry chunks");
+  while (queue.length > 0 && crawlCount < MAX_CHUNKS_TO_CRAWL) {
+    // Take a batch from the queue (process in parallel for speed)
+    const batch = queue.splice(0, Math.min(queue.length, 10));
+    const batchResults = await Promise.all(
+      batch.map(async (url) => {
+        if (visited.has(url)) return { found: null, newUrls: [] };
+        visited.add(url);
+        crawlCount++;
+        try {
+          const res = await fetch(url, {
+            headers: { "User-Agent": MKISSA_UA, "Accept": "*/*" },
+          });
+          if (!res.ok) return { found: null, newUrls: [] };
+          const src = await res.text();
+
+          // Search for MASK + BUILD_ID in this chunk
+          const extracted = extractMaskAndBuildId(src);
+          if (extracted && extracted.buildId) {
+            return {
+              found: {
+                mask: extracted.mask,
+                buildId: extracted.buildId,
+                chunkUrl: url,
+              },
+              newUrls: [],
+            };
+          }
+
+          // Not found here — collect new chunk URLs for the next depth level
+          const newUrls = [];
+          for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
+            const abs = resolveChunkUrl(m[1], url);
+            if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) {
+              newUrls.push(abs);
+            }
+          }
+          for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
+            const abs = resolveChunkUrl(m[1], url);
+            if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) {
+              newUrls.push(abs);
+            }
+          }
+          return { found: null, newUrls };
+        } catch (e) {
+          return { found: null, newUrls: [] };
+        }
+      })
+    );
+
+    // Check if any chunk in this batch had the MASK
+    const found = batchResults.find((r) => r.found !== null);
+    if (found) {
+      console.log(
+        `[worker] ✓ discovered MASK=${found.found.mask.slice(0, 16)}... BUILD_ID=${found.found.buildId} from ${found.found.chunkUrl.split("/").pop()} (crawled ${crawlCount} chunks)`
+      );
+      return { mask: found.found.mask, buildId: found.found.buildId };
+    }
+
+    // Add new URLs to the queue for the next depth level
+    for (const r of batchResults) {
+      for (const u of r.newUrls) {
+        if (!visited.has(u) && !queue.includes(u)) {
+          queue.push(u);
+        }
+      }
+    }
   }
 
-  // Step 4: Fetch all chunks in parallel, search each for MASK + BUILD_ID
-  // using the robust extractor (handles all observed pattern shapes).
-  const results = await Promise.all(
-    candidateUrls.map(async (url) => {
-      try {
-        const res = await fetch(url, {
-          headers: { "User-Agent": MKISSA_UA, "Accept": "*/*" },
-        });
-        if (!res.ok) return null;
-        const src = await res.text();
-        const extracted = extractMaskAndBuildId(src);
-        if (!extracted || !extracted.buildId) return null;
-        return {
-          mask: extracted.mask,
-          buildId: extracted.buildId,
-          chunkUrl: url,
-        };
-      } catch (e) {
-        return null;
-      }
-    })
-  );
-
-  const found = results.find((r) => r !== null);
-  if (!found) {
-    throw new Error("MASK/BUILD_ID not found in any crawled chunk — pattern shape may have changed again. Update extractMaskAndBuildId() in worker.js and the matching logic in refresh-mkissa-mask.yml");
-  }
-
-  console.log(
-    `[worker] ✓ discovered MASK=${found.mask.slice(0, 16)}... BUILD_ID=${found.buildId} from ${found.chunkUrl.split("/").pop()}`
-  );
-  return { mask: found.mask, buildId: found.buildId };
+  throw new Error(`MASK/BUILD_ID not found after crawling ${crawlCount} chunks — pattern shape may have changed. Update extractMaskAndBuildId() in worker.js and the matching logic in refresh-mkissa-mask.yml`);
 }
 
 // Returns the current MASK/BUILD_ID, preferring cached discovered values,
