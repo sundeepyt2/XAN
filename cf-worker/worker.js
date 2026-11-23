@@ -16,9 +16,9 @@
 // The stream proxy functionality is unchanged.
 
 // ─── MASK / BUILD_ID — auto-refreshed by refresh-mkissa-mask.yml ──────────
-// Last manual verification: 2026-11-20
+// Last manual verification: 2026-11-23
 const FALLBACK_MASK_HEX = "e574fe78e582fc9d49ec645d7a2d2aac1798e482279fd22ef9f892dff33d1f58";
-const FALLBACK_BUILD_ID = "190";
+const FALLBACK_BUILD_ID = "191";
 
 // Runtime cache for discovered MASK/BUILD_ID
 let discoveredCrypto = null;
