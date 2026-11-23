@@ -17,8 +17,8 @@
 
 // ─── MASK / BUILD_ID — auto-refreshed by refresh-mkissa-mask.yml ──────────
 // Last manual verification: 2026-11-23
-const FALLBACK_MASK_HEX = "e574fe78e582fc9d49ec645d7a2d2aac1798e482279fd22ef9f892dff33d1f58";
-const FALLBACK_BUILD_ID = "191";
+const FALLBACK_MASK_HEX = "0b15a379d221e17ec2a93b49c8e9d424382e549138820adb938c42626fc18f7c";
+const FALLBACK_BUILD_ID = "192";
 
 // Runtime cache for discovered MASK/BUILD_ID
 let discoveredCrypto = null;
